@@ -44,11 +44,34 @@ from linkedin_consumer import (
 )
 
 # ── Config (LLM enrichment — tetap di consumer, bukan pipeline) ───────────────
-DEEPSEEK_API = "http://localhost:20128/v1/chat/completions"  # 9Router proxy
-DEEPSEEK_MODEL = "oc/deepseek-v4-flash-free"
-ENRICH_MODELS = ["kc/nvidia/nemotron-3-super-120b-a12b:free", "MARK", "abelink", DEEPSEEK_MODEL]
-VISION_MODEL = "gc/gemini-3.1-flash-lite-preview"  # 9Router Vision Adapter (OCR foto)
-VISION_MODEL_FALLBACK = "oc/mimo-v2.5-free"
+# Source of truth: .env (BASE_URL, API_KEY, MODEL_*). Fallback keras jika .env
+# tidak ada, agar skrip tetap bisa jalan standalone.
+def _env_load() -> dict:
+    env = {}
+    p = Path(__file__).parent / ".env"
+    if p.exists():
+        for line in p.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            env[k.strip()] = v.strip()
+    return env
+
+_ENV = _env_load()
+
+DEEPSEEK_API = (_ENV.get("BASE_URL", "http://localhost:20128/v1").rstrip("/") + "/chat/completions")
+DEEPSEEK_KEY = _ENV.get("API_KEY", "")
+DEEPSEEK_MODEL = _ENV.get("MODEL_PLANNER", "oc/deepseek-v4-flash-free")
+# Chain fallback: Gemini (cepat) dulu → model planner → fallback → claude-work.
+# Per arahan: Gemini baik untuk vision + eksekusi plan matang, TAPI buruk utk
+# reasoning → ganti abelink dengan claude-work (reasoning kuat + self-improving:
+# semakin sering dipakai, sistem semakin pintar — arah menuju Mark).
+GEMINI_MODEL = _ENV.get("MODEL_VISION_DEFAULT", "gc/gemini-3.1-flash-lite")
+ENRICH_MODELS = [GEMINI_MODEL, DEEPSEEK_MODEL, _ENV.get("MODEL_PLANNER_FALLBACK", "ac/deepseek-v4-flash"), "claude-work"]
+# Vision: default OCR → fallback mimo
+VISION_MODEL = _ENV.get("MODEL_VISION_DEFAULT", "gc/gemini-3.1-flash-lite")
+VISION_MODEL_FALLBACK = _ENV.get("MODEL_VISION_OCR", "oc/mimo-v2.5-free")
 
 LINKEDIN_URL_RE = re.compile(r"linkedin\.com/in/([A-Za-z0-9_-]+)")
 
@@ -264,14 +287,23 @@ async def run_pipeline(
 ):
     """Full pipeline: TikTok → curated corpus → LinkedIn match/connect."""
 
-    # ── Step 1: Collect (delegated) ──
+    # ── Step 1: Collect (delegated) — SKIP jika raw sudah ada (no redundant) ──
     print(f"\n{'='*60}\n  STEP 1: Collect TikTok comments (collector)\n{'='*60}\n")
-    result = await collector.collect_video(
-        video_url, max_scrolls=max_scrolls, max_comments=max_comments)
-    if result.get("error"):
-        print(f"[!] Collect gagal: {result['error']}")
-        return []
-    video_id = result["video_id"]
+    m = re.search(r"/video/(\d+)", video_url)
+    video_id = m.group(1) if m else ""
+    today = time.strftime("%Y-%m-%d")
+    existing_raw = (pipeline.RAW_DIR / today / f"{video_id}.jsonl")
+    if existing_raw.exists() and existing_raw.stat().st_size > 0:
+        print(f"[collector] Raw sudah ada ({existing_raw.stat().st_size} B) — lewati koleksi, pakai data existing")
+        n_raw = sum(1 for _ in existing_raw.open())
+        result = {"video_id": video_id, "output": str(existing_raw), "comments": n_raw}
+    else:
+        result = await collector.collect_video(
+            video_url, max_scrolls=max_scrolls, max_comments=max_comments)
+        if result.get("error"):
+            print(f"[!] Collect gagal: {result['error']}")
+            return []
+        video_id = result["video_id"]
 
     # ── Step 2: Pipeline stages raw → curated (delegated) ──
     print(f"\n{'='*60}\n  STEP 2: Normalize → dedup → enrich → quality\n{'='*60}\n")
@@ -467,7 +499,7 @@ def main():
     parser.add_argument("--key", help="DeepSeek API key")
     args = parser.parse_args()
 
-    key = args.key or os.environ.get("NINEROUTER_API_KEY") or os.environ.get("DEEPSEEK_API_KEY", "")
+    key = args.key or DEEPSEEK_KEY or os.environ.get("NINEROUTER_API_KEY") or os.environ.get("DEEPSEEK_API_KEY", "")
 
     if args.login or not args.url:
         asyncio.run(login_only())

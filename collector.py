@@ -71,7 +71,13 @@ def load_job(video_id: str) -> Optional[dict]:
 # ── Browser ───────────────────────────────────────────────────────────────────
 async def init_browser(headless: bool = False):
     ensure_dirs()
-    browser = await uc.start(headless=headless, user_data_dir=str(PROFILE_DIR))
+    try:
+        browser = await uc.start(headless=headless, user_data_dir=str(PROFILE_DIR))
+    except Exception as e:
+        # Linux umum: sandbox gagal (root/no_sandbox) → retry tanpa sandbox
+        print(f"[collector] uc.start failed ({e}); retry with no_sandbox")
+        browser = await uc.start(headless=headless, user_data_dir=str(PROFILE_DIR),
+                                 no_sandbox=True)
     try:
         import nodriver.cdp.network as net
         import nodriver.cdp.runtime as runtime
