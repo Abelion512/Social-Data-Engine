@@ -26,6 +26,10 @@ state/
 *.state
 *.pkl
 
+# Scraped corpus (privacy + volume)
+data/
+*.jsonl
+
 # IDE
 .vscode/
 .idea/
