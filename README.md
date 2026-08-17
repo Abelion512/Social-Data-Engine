@@ -48,10 +48,11 @@ tanda. Lihat `docs/IMPLEMENTATION.md` untuk detail.
 
 ## Limitasi yang diketahui
 
-- TikTok 2026 membatasi render komentar: hanya batch awal (mis. 20 dari 55)
-  termuat tanpa interaksi level-OS yang disimulasikan penuh.
+- **Camoufox + cookie + reply expansion** = jalur terbaik: 43/55 (78%)
+  tercapai (vs 20/55 via nodriver). Reply (View all replies) adalah kunci —
+  count TikTok (55) termasuk replies, bukan hanya top-level.
+- Camoufox crash/EPIPE setelah ~2 batch expand — 12 reply terakhir belum
+  terjangkau; butuh stabilisasi (retry browser, chunk kecil).
 - CDP body-grab (`get_response_body`) gagal pada body yang di-evict
-  (-32000); Fetch intercept kena race di nodriver — didokumentasikan sebagai
-  P1. Playwright adalah jalur yang menjanjikan (response API bisa dibaca),
-  eksperimen interaksi berlanjut.
+  (-32000); Fetch intercept kena race di nodriver — P1.
 - API comment langsung butuh signature (msToken/X-Bogus).
