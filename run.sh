@@ -14,11 +14,11 @@ source .venv/bin/activate
 
 if [ -z "$1" ]; then
     # No URL → login mode
-    python tiktok_linkedin.py --login
+    python src/tiktok_linkedin.py --login
 else
     # URL provided → run pipeline
     LOG="$DIR/pipeline_$(date +%Y%m%d_%H%M%S).log"
-    python tiktok_linkedin.py "$@" 2>&1 | tee "$LOG"
+    python src/tiktok_linkedin.py "$@" 2>&1 | tee "$LOG"
     echo ""
     echo "Results: ~/.tiktok-linkedin/state/"
     echo "Log: $LOG"

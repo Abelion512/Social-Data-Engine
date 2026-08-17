@@ -20,13 +20,20 @@ import asyncio
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import collector
-import pipeline
-from linkedin_consumer import (
+# Pastikan root repo (parent dari src/) masuk sys.path — diperlukan saat
+# dieksekusi sebagai `python src/tiktok_linkedin.py`
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from src import collector
+from src import pipeline
+from src.linkedin_consumer import (
     LINKEDIN_LIMITS,
     CONNECTIONS_FILE,
     already_connected,
@@ -289,7 +296,7 @@ async def run_pipeline(
 
     # ── Step 1: Collect (delegated) — SKIP jika raw sudah ada (no redundant) ──
     print(f"\n{'='*60}\n  STEP 1: Collect TikTok comments (collector)\n{'='*60}\n")
-    m = re.search(r"/video/(\d+)", video_url)
+    m = re.search(r"/(?:video|photo)/(\d+)", video_url)
     video_id = m.group(1) if m else ""
     today = time.strftime("%Y-%m-%d")
     existing_raw = (pipeline.RAW_DIR / today / f"{video_id}.jsonl")

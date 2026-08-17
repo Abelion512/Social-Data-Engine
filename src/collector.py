@@ -16,14 +16,21 @@ import asyncio
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from typing import List, Dict, Optional
 
+# Pastikan root repo (parent dari src/) masuk sys.path — diperlukan saat
+# dieksekusi sebagai `python src/collector.py` (cwd bukan otomatis sys.path)
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 import nodriver as uc
 import base64
 
-from tiktok_schema import (
+from src.tiktok_schema import (
     RawComment,
     Author,
     raw_from_api,
@@ -35,7 +42,7 @@ from tiktok_schema import (
 # ── Paths ─────────────────────────────────────────────────────────────────────
 PROFILE_DIR = Path.home() / ".tiktok-linkedin" / "chrome-profile"
 STATE_DIR = Path.home() / ".tiktok-linkedin" / "state"
-DATA_DIR = Path(__file__).parent / "data"
+DATA_DIR = _ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
 MANIFEST_DIR = DATA_DIR / "manifests"
 JOB_DIR = STATE_DIR / "jobs"
@@ -71,6 +78,13 @@ def load_job(video_id: str) -> Optional[dict]:
 # ── Browser ───────────────────────────────────────────────────────────────────
 async def init_browser(headless: bool = False):
     ensure_dirs()
+    # Singleton lock tertinggal dari run crash → Chrome gagal start (buka-close).
+    # Bersihkan sebelum start setiap kali.
+    try:
+        for f in PROFILE_DIR.glob("Singleton*"):
+            f.unlink()
+    except Exception:
+        pass
     try:
         browser = await uc.start(headless=headless, user_data_dir=str(PROFILE_DIR))
     except Exception as e:
@@ -125,8 +139,8 @@ async def extract_video_context(tab) -> dict:
             return {"video_id": "", "video_url": "", "caption": "", "hashtags": [], "creator": "", "create_time": 0, "transcription": ""}
         video_url = data.get("url", "")
         # Coba dapatkan video_id dari URL
-        m = re.search(r"/video/(\d+)|/@[^/]+/video/(\d+)", video_url)
-        video_id = m.group(1) if m and m.group(1) else (m.group(2) if m and m.group(2) else "")
+        m = re.search(r"/(?:video|photo)/(\d+)", video_url)
+        video_id = m.group(1) if m else ""
         return {
             "video_id": video_id,
             "video_url": video_url,
@@ -182,6 +196,18 @@ DOM_SCRAPE_JS = r"""(() => {
 
 SCROLL_JS = r"""(() => {
         var cont = null;
+        // 0) Simulasi interaksi: fokus panel + klik item terakhir (trigger SPA)
+        var last = null;
+        try {
+            var all = document.querySelectorAll('[data-e2e^="comment-level-"]');
+            if (all.length) { last = all[all.length - 1]; last.scrollIntoView({ block: 'end' }); last.focus(); }
+        } catch (e) {}
+        var w = document.querySelector('[class*="DivCommentMain"]');
+        if (w) {
+            w.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            w.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        }
+        // 1) Cari container komentar: selector spesifik + DETEKSI GENERIK
         var sl = document.querySelector('[data-e2e="comment-list"]');
         if (sl) {
             var p = sl.parentElement;
@@ -189,14 +215,26 @@ SCROLL_JS = r"""(() => {
             if (p) cont = p;
         }
         if (!cont) cont = document.querySelector('[class*="DivCommentListContainer"]');
-        // klik semua trigger load-more / view-replies yang terlihat
+        if (!cont) cont = document.querySelector('[class*="DivCommentMain"]');
+        if (!cont) cont = document.querySelector('[class*="CommentListContainer"]');
+        // Generik: elemen scrollable yang MENGANDUNG komentar (TikTok class hash berubah)
+        if (!cont) {
+            var cands = Array.from(document.querySelectorAll('div')).filter(e => {
+                return e.scrollHeight > e.clientHeight + 50 &&
+                       e.querySelectorAll('[data-e2e^="comment-level-"]').length > 0;
+            }).sort((a, b) => b.scrollHeight - a.scrollHeight);
+            if (cands.length) cont = cands[0];
+        }
+        // 2) Klik semua trigger load-more / expand reply
         document.querySelectorAll('[data-e2e*="load-more"], [class*="LoadMore"], [data-e2e*="comment-load"], [data-e2e*="view-more-"]').forEach(el => { try { el.click(); } catch (e) {} });
-        if (!cont) { window.scrollBy(0, 800); return; }
-        // scroll persisten: pakai scrollIntoView pada item terakhir → pasti men-trigger lazy-load
+        // 3) Scroll kontainer (jika ada) + window (jika tidak)
+        if (!cont) {
+            window.scrollBy(0, 900);
+            return 'window-scroll';
+        }
         var items = cont.querySelectorAll('[data-e2e^="comment-level-"]');
         if (items.length) { items[items.length - 1].scrollIntoView({ behavior: 'instant', block: 'end' }); }
         cont.scrollTop = cont.scrollHeight;
-        // TikTok modern merespons wheel/gesture, bukan scrollTop saja — dispatch wheel
         cont.dispatchEvent(new WheelEvent('wheel', { deltaY: 1200, bubbles: true, cancelable: true }));
         return cont.scrollHeight + ':' + cont.scrollTop;
     })()"""
@@ -235,43 +273,45 @@ CHECK_BLOCK_JS = r"""(() => {
 })()"""
 
 
-# ── CDP response interceptor ──────────────────────────────────────────────────
+# ── CDP interceptor: Fetch (baca body FULL saat paused) ───────────────────────
+# ResponseReceived + getResponseBody gagal (-32000: body evicted). Fetch
+# intercept menangkap body di titik PAUSED (body pasti ada di memori).
 async def setup_cdp_handler(tab):
-    """Register handler untuk menangkap API response komentar via CDP.
+    """Fetch.requestPaused → baca body komentar → continue request.
 
-    Instrumentasi (poin #6 review): counter bertingkat supaya bisa
-    dibedakan "listener tidak menerima" vs "parser gagal":
-      responses_observed → comment_like → parsed_ok → comments_count
+    Counter: observed → comment_like → parsed_ok → comments (poin #6).
     """
+    import nodriver.cdp.fetch as f
     import nodriver.cdp.network as cdp_network
     captured_pages: list = []
     counters = {"observed": 0, "comment_like": 0, "parsed_ok": 0, "comments": 0}
 
-    async def _on_response(event):
-        url = event.response.url or ""
-        counters["observed"] += 1
-        # Looser: tangkap semua response JSON yang punya "comments" key,
-        # bukan cuma yang URL-nya mengandung "comment" (endpoint bisa berganti).
+    async def _on_paused(event: f.RequestPaused):
+        url = event.request.url or ""
         if "comment" not in url and "aweme" not in url:
+            try:
+                await tab.send(f.continue_request(event.request_id))
+            except Exception:
+                pass
             return
+        counters["observed"] += 1
         counters["comment_like"] += 1
         is_reply = "/reply/" in url or "comment/list/reply" in url
-        if event.response.status in (304, 204):
-            return  # cached/no-body — tak ada body utk di-grab
+        # Body di titik paused — pasti tersedia
         try:
-            body_str, is_b64 = await tab.send(cdp_network.get_response_body(event.request_id))
+            body = await tab.send(f.get_response_body(event.request_id))
+            body_str, is_b64 = body
             if is_b64:
                 body_str = base64.b64decode(body_str).decode("utf-8", errors="replace")
             data = json.loads(body_str)
         except Exception as e:
-            # Debug CDP body-grab: bedakan "request_id invalid" vs "decode gagal"
             err = str(e).splitlines()[0] if str(e) else type(e).__name__
-            if counters["parsed_ok"] == 0 and isinstance(e, Exception):
-                print(f"[cdp] body grab err ({url[-60:]}): {err[:120]}")
+            if counters["parsed_ok"] == 0:
+                print(f"[cdp] fetch body err ({url[-60:]}): {err[:100]}")
+            await tab.send(f.continue_request(event.request_id))
             return
-        if data.get("status_code", -1) != 0:
-            return
-        comments = data.get("comments")
+        await tab.send(f.continue_request(event.request_id))
+        comments = data.get("comments") if isinstance(data, dict) else None
         if not isinstance(comments, list):
             return
         counters["parsed_ok"] += 1
@@ -286,8 +326,17 @@ async def setup_cdp_handler(tab):
         label = "reply" if is_reply else "comment"
         print(f"[cdp] {label} page: +{len(page['comments'])}")
 
-    tab.add_handler(cdp_network.ResponseReceived, _on_response)
-    print("[collector] CDP handler registered")
+    # Enable SETELAH handler terdaftar — event yang masuk setelah enable
+    # pasti punya domain aktif (tidak ada race -32000).
+    try:
+        await tab.send(f.enable())
+        print("[collector] Fetch domain enabled (all responses)")
+    except Exception as e:
+        print(f"[collector] Fetch enable err: {e}")
+        return [], counters
+
+    tab.add_handler(f.RequestPaused, _on_paused)
+    print("[collector] Fetch CDP handler registered")
     return captured_pages, counters
 
 
@@ -338,6 +387,54 @@ async def _probe_reported_count(tab) -> int:
         return 0
 
 
+API_COMMENT_FETCH_JS = """async (cursor) => {
+    const id = window.__ttc_video_id__ || '';
+    const msT = Math.round(Date.now());
+    const url = `https://www.tiktok.com/api/comment/list/?aid=1988&aweme_id=${id}&count=50&cursor=${cursor || 0}&comment_style=2&from=web&device_platform=web&channel=normal&enter_from=comment_detail_page&current_region=ID&os=linux&sec_user_id&webcast_language=en&msToken=&X-Bogus=`;
+    const r = await fetch(url, {
+        headers: { 'accept': 'application/json, text/plain, */*', 'x-secsdk-csrf-token': '', 'sec-fetch-site': 'same-origin' },
+        credentials: 'include'
+    });
+    const j = await r.json();
+    return JSON.stringify({ comments: j.comments || [], has_more: j.has_more || 0, cursor: j.cursor || 0 });
+}"""
+
+
+# ── Jalur API langsung (via fetch di halaman, same-origin) ──
+# CDP body-grab gagal (-32000: body di-evict). API fetch lewat JS di halaman
+# memakai cookie session browser → dapat semua komentar ber-pagination.
+async def fetch_comments_api(tab, video_id: str, cursor: int = 0) -> dict:
+    """Fetch komentar dari TikTok API via evaluate (same-origin cookie).
+
+    Catatan: tab.evaluate TIDAK menunggu Promise async IIFE — pakai
+    synchronous XHR + polling, atau evaluate dengan awaitPromise explicit.
+    """
+    js = f"""async () => {{
+        const url = `https://www.tiktok.com/api/comment/list/?aid=1988&aweme_id={video_id}&count=50&cursor={cursor}&comment_style=2&from=web&device_platform=web&channel=normal&enter_from=comment_detail_page`;
+        try {{
+            const r = await fetch(url, {{ credentials: 'include', headers: {{ 'accept': 'application/json, text/plain, */*', 'sec-fetch-site': 'same-origin' }} }});
+            const j = await r.json();
+            return JSON.stringify({{ comments: j.comments || [], has_more: j.has_more || 0, cursor: j.cursor || 0 }});
+        }} catch (e) {{
+            return JSON.stringify({{ error: String(e) }});
+        }}
+    }}"""
+    try:
+        out = await tab.evaluate(js, await_promise=True)
+    except Exception as e:
+        return {"error": f"evaluate: {e}"}
+    if isinstance(out, list):
+        out = out[0] if out else None
+    if isinstance(out, dict):  # nodriver bisa langsung parse
+        return out
+    if isinstance(out, str) and out.strip():
+        try:
+            return json.loads(out)
+        except Exception:
+            return {"error": f"parse: {out[:100]}"}
+    return {"error": "empty result"}
+
+
 async def collect_video(
     video_url: str,
     max_scrolls: int = 60,
@@ -351,7 +448,7 @@ async def collect_video(
     ensure_dirs()
 
     # Parse video_id
-    m = re.search(r"/video/(\d+)", video_url)
+    m = re.search(r"/(?:video|photo)/(\d+)", video_url)
     if not m:
         print(f"[!] Tidak bisa ekstrak video_id dari {video_url}")
         return {"error": "invalid_url", "video_url": video_url}
@@ -462,11 +559,33 @@ async def collect_video(
                     r = raw_from_api(api_comment, video_ctx_, method="cdp")
                     all_raw_.append(r)
                     cdp_added += 1
-                    if cid:
-                        seen_ids_.add(cid)
-                    r = raw_from_api(api_comment, video_ctx_, method="cdp")
-                    all_raw_.append(r)
-                    cdp_added += 1
+
+            # ── Jalur API langsung (fetch same-origin di halaman) ──
+            # Pelengkap ketika CDP body-grab gagal: paginasi cursor API.
+            api_added = 0
+            cursor = getattr(_capture_pass, "_api_cursor", 0)
+            has_more = getattr(_capture_pass, "_api_has_more", True)
+            if has_more:
+                page = await fetch_comments_api(tab_, video_id_, cursor) or {}
+                if page.get("error"):
+                    print(f"[api] fetch err: {page['error'][:100]}")
+                    has_more = False
+                else:
+                    for api_comment in page.get("comments", []):
+                        cid = api_comment.get("cid", "")
+                        if cid and cid in seen_ids_:
+                            continue
+                        if cid:
+                            seen_ids_.add(cid)
+                        r = raw_from_api(api_comment, video_ctx_, method="api")
+                        all_raw_.append(r)
+                        api_added += 1
+                    _capture_pass._api_cursor = page.get("cursor", 0)
+                    _capture_pass._api_has_more = bool(page.get("has_more", 0))
+            # Reset setelah 1 panggilan API per iter — avoid infinite tanpa scroll
+            if api_added == 0:
+                _capture_pass._api_has_more = False
+                _capture_pass._api_cursor = 0
 
             # Expand replies
             try:
@@ -488,9 +607,9 @@ async def collect_video(
             job_state_["cursor"] = i
             save_job(video_id_, job_state_)
 
-            iter_new = dom_added + cdp_added
+            iter_new = dom_added + cdp_added + api_added
             # Telemetri [COLLECT] — visible = jumlah DOM row saat ini (bukan total unik)
-            print(f"[COLLECT] iteration={i+1} visible={visible} new={iter_new} total={len(all_raw_)}")
+            print(f"[COLLECT] iteration={i+1} visible={visible} dom=+{dom_added} cdp=+{cdp_added} api=+{api_added} total={len(all_raw_)}")
             new += iter_new
             if iter_new == 0:
                 stale += 1

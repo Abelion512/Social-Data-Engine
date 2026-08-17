@@ -21,13 +21,20 @@ import argparse
 import json
 import os
 import re
+import sys
 import time
 import hashlib
 from pathlib import Path
 from typing import List, Dict, Optional, Callable
 from datetime import datetime, timezone
 
-from tiktok_schema import (
+# Pastikan root repo (parent dari src/) masuk sys.path — diperlukan saat
+# dieksekusi sebagai `python src/pipeline.py`
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from src.tiktok_schema import (
     SCHEMA_VERSION,
     COLLECTOR_VERSION,
     normalize_text,
@@ -41,7 +48,7 @@ from tiktok_schema import (
 )
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE = Path(__file__).parent
+BASE = _ROOT  # root repo (bukan src/)
 DATA_DIR = BASE / "data"
 RAW_DIR = DATA_DIR / "raw"
 NORM_DIR = DATA_DIR / "normalized"
