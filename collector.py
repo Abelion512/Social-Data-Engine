@@ -82,7 +82,13 @@ async def init_browser(headless: bool = False):
         import nodriver.cdp.network as net
         import nodriver.cdp.runtime as runtime
         tab = browser.main_tab
-        await tab.send(net.enable())
+        # Buffer besar: response body tidak boleh di-evict sebelum handler
+        # membacanya (root cause -32000 "No resource with given identifier").
+        try:
+            await tab.send(net.enable(max_total_buffer_size=100 * 1024 * 1024,
+                                      max_resource_buffer_size=50 * 1024 * 1024))
+        except TypeError:
+            await tab.send(net.enable())  # fallback: versi lama tanpa arg
         await tab.send(runtime.enable())
         print("[collector] CDP network monitoring enabled")
     except Exception as e:
@@ -250,12 +256,18 @@ async def setup_cdp_handler(tab):
             return
         counters["comment_like"] += 1
         is_reply = "/reply/" in url or "comment/list/reply" in url
+        if event.response.status in (304, 204):
+            return  # cached/no-body — tak ada body utk di-grab
         try:
             body_str, is_b64 = await tab.send(cdp_network.get_response_body(event.request_id))
             if is_b64:
                 body_str = base64.b64decode(body_str).decode("utf-8", errors="replace")
             data = json.loads(body_str)
-        except Exception:
+        except Exception as e:
+            # Debug CDP body-grab: bedakan "request_id invalid" vs "decode gagal"
+            err = str(e).splitlines()[0] if str(e) else type(e).__name__
+            if counters["parsed_ok"] == 0 and isinstance(e, Exception):
+                print(f"[cdp] body grab err ({url[-60:]}): {err[:120]}")
             return
         if data.get("status_code", -1) != 0:
             return
