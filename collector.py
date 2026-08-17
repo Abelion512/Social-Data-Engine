@@ -231,16 +231,24 @@ CHECK_BLOCK_JS = r"""(() => {
 
 # ── CDP response interceptor ──────────────────────────────────────────────────
 async def setup_cdp_handler(tab):
-    """Register handler untuk menangkap API response komentar via CDP."""
+    """Register handler untuk menangkap API response komentar via CDP.
+
+    Instrumentasi (poin #6 review): counter bertingkat supaya bisa
+    dibedakan "listener tidak menerima" vs "parser gagal":
+      responses_observed → comment_like → parsed_ok → comments_count
+    """
     import nodriver.cdp.network as cdp_network
     captured_pages: list = []
+    counters = {"observed": 0, "comment_like": 0, "parsed_ok": 0, "comments": 0}
 
     async def _on_response(event):
         url = event.response.url or ""
+        counters["observed"] += 1
         # Looser: tangkap semua response JSON yang punya "comments" key,
         # bukan cuma yang URL-nya mengandung "comment" (endpoint bisa berganti).
         if "comment" not in url and "aweme" not in url:
             return
+        counters["comment_like"] += 1
         is_reply = "/reply/" in url or "comment/list/reply" in url
         try:
             body_str, is_b64 = await tab.send(cdp_network.get_response_body(event.request_id))
@@ -254,6 +262,8 @@ async def setup_cdp_handler(tab):
         comments = data.get("comments")
         if not isinstance(comments, list):
             return
+        counters["parsed_ok"] += 1
+        counters["comments"] += len(comments)
         page = {
             "comments": comments,
             "has_more": data.get("has_more", 0),
@@ -266,10 +276,56 @@ async def setup_cdp_handler(tab):
 
     tab.add_handler(cdp_network.ResponseReceived, _on_response)
     print("[collector] CDP handler registered")
-    return captured_pages
+    return captured_pages, counters
 
 
 # ── Main capture loop ─────────────────────────────────────
+def _b36(n: int) -> str:
+    """JS-compatible toString(36) — cocok dengan hash DOM di DOM_SCRAPE_JS."""
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    if n == 0:
+        return "0"
+    out = ""
+    while n:
+        n, r = divmod(n, 36)
+        out = digits[r] + out
+    return out
+
+
+async def _probe_reported_count(tab) -> int:
+    """Poin #4: baca jumlah komentar yang dilaporkan TikTok UI.
+
+    Prioritas: data-e2e="comment-count" → tombol dengan aria-label berisi
+    "comment(s)" → teks "N comments". Tidak ada → 0 (=unknown).
+    """
+    js = r"""(() => {
+        const q = (s) => document.querySelector(s);
+        const el = q('[data-e2e="comment-count"]');
+        if (el) {
+            const t = (el.getAttribute('title') || el.textContent || '').trim();
+            const m = t.match(/(\d[\d.,]*)/);
+            if (m) return parseInt(m[1].replace(/[.,]/g, ''), 10) || 0;
+        }
+        const buttons = document.querySelectorAll('button[aria-label]');
+        for (const b of buttons) {
+            const l = (b.getAttribute('aria-label') || '').toLowerCase();
+            const m = l.match(/(\d[\d.,]*)\s*comments?/);
+            if (m) return parseInt(m[1].replace(/[.,]/g, ''), 10) || 0;
+        }
+        const bt = document.body ? document.body.innerText : '';
+        const m = bt.match(/(\d[\d.,]*)\s*comments?/i);
+        if (m) return parseInt(m[1].replace(/[.,]/g, ''), 10) || 0;
+        return 0;
+    })()"""
+    try:
+        r = await tab.evaluate(js)
+        if isinstance(r, list):
+            r = r[0] if r else 0
+        return int(r or 0)
+    except Exception:
+        return 0
+
+
 async def collect_video(
     video_url: str,
     max_scrolls: int = 60,
@@ -302,7 +358,7 @@ async def collect_video(
     tab = browser.main_tab
 
     # Setup CDP
-    cdp_pages = await setup_cdp_handler(tab)
+    cdp_pages, cdp_counters = await setup_cdp_handler(tab)
 
     # Navigate (dengan retry + deteksi blokir)
     for attempt in range(3):
@@ -327,6 +383,9 @@ async def collect_video(
     video_ctx["video_id"] = video_id
     video_ctx["video_url"] = video_url
 
+    # Reported comment count dari UI (poin #4: bedakan reported vs captured)
+    reported_count = await _probe_reported_count(tab)
+
     # ── Capture: maksimal 3 pass navigasi; berhenti bila sudah dapat komentar ──
     out_path = raw_path(video_id)
     all_raw: List[RawComment] = []
@@ -335,9 +394,15 @@ async def collect_video(
     async def _capture_pass(tab_, video_ctx_, cdp_pages_, all_raw_,
                             seen_ids_, out_path_, video_id_, job_state_,
                             max_scrolls_, max_comments_):
-        """Satu pass capture: DOM + CDP + scroll. Return jumlah baru dibawa."""
+        """Satu pass capture: DOM + CDP + scroll.
+
+        Stop condition: tidak ada ID unik baru selama STALE_LIMIT iterasi
+        (bukan len(DOM)). Telemetri [COLLECT] per iter: visible/new/total.
+        """
         new = 0
         stale = 0
+        STALE_LIMIT = 6
+        prev_total = len(all_raw_)
         for i in range(max_scrolls_):
             dom_added = 0
             try:
@@ -349,6 +414,8 @@ async def collect_video(
             except Exception as e:
                 print(f"[collector] DOM scrape err: {e}")
                 rows = []
+            visible = len(rows)
+            dom_before = len(all_raw_)
 
             for row in rows:
                 cid = row.get("comment_id", "")
@@ -359,14 +426,30 @@ async def collect_video(
                 all_raw_.append(r)
                 dom_added += 1
 
-            # Drain CDP pages
+            # Drain CDP pages (identity preferensial: cid API nyata, bukan hash DOM)
             cdp_added = 0
             while cdp_pages_:
                 page = cdp_pages_.pop(0)
                 for api_comment in page.get("comments", []):
                     cid = api_comment.get("cid", "")
-                    if cid and cid in seen_ids_:
-                        continue
+                    # Kunci identity lintas-path: jika komentar DOM sudah tertangkap
+                    # (hash dom_*), tandai cid API-nya juga agar tidak dobel.
+                    if cid:
+                        if cid in seen_ids_:
+                            continue
+                        fprint = str(api_comment.get("text", ""))[:120] + "|" + str((api_comment.get("user", {}) or {}).get("unique_id", ""))
+                        h = 0
+                        for ch in fprint:
+                            h = (h * 31 + ord(ch)) & 0x7fffffff
+                        # base-36, sama dengan toString(36) di DOM_SCRAPE_JS
+                        dom_alias = "dom_" + _b36(h)
+                        if dom_alias in seen_ids_:
+                            seen_ids_.add(cid)  # komentar sudah ada via DOM → tandai saja
+                            continue
+                        seen_ids_.add(cid)
+                    r = raw_from_api(api_comment, video_ctx_, method="cdp")
+                    all_raw_.append(r)
+                    cdp_added += 1
                     if cid:
                         seen_ids_.add(cid)
                     r = raw_from_api(api_comment, video_ctx_, method="cdp")
@@ -393,9 +476,11 @@ async def collect_video(
             job_state_["cursor"] = i
             save_job(video_id_, job_state_)
 
-            print(f"[collector] iter {i+1}: dom=+{dom_added} cdp=+{cdp_added} total={len(all_raw_)}")
-            new += dom_added + cdp_added
-            if dom_added == 0 and cdp_added == 0:
+            iter_new = dom_added + cdp_added
+            # Telemetri [COLLECT] — visible = jumlah DOM row saat ini (bukan total unik)
+            print(f"[COLLECT] iteration={i+1} visible={visible} new={iter_new} total={len(all_raw_)}")
+            new += iter_new
+            if iter_new == 0:
                 stale += 1
             else:
                 stale = 0
@@ -403,8 +488,8 @@ async def collect_video(
             if len(all_raw_) >= max_comments_:
                 print(f"[collector] Cap {max_comments_} komentar. Stop.")
                 break
-            if stale >= 6 and i >= 10:
-                print(f"[collector] stale stop at iter {i+1}")
+            if stale >= STALE_LIMIT and i >= 10:
+                print(f"[collector] stale stop at iter {i+1} (no new unique IDs for {STALE_LIMIT} iters)")
                 break
 
             try:
@@ -478,18 +563,46 @@ async def collect_video(
             all_raw.append(r)
 
     final_written = write_jsonl(str(out_path), [r.to_dict() for r in all_raw])
+
+    # ── Collection completeness (poin #4/#5) ──
+    captured = len(all_raw)
+    if reported_count > 0:
+        coverage = round(captured / reported_count, 3)
+        if coverage >= 1.0:
+            collection_status = "complete"
+        elif coverage >= 0.5:
+            collection_status = "partial"
+        else:
+            collection_status = "partial"   # <50% tetap partial; failed khusus error
+    else:
+        coverage = None
+        collection_status = "unknown"
+
     job_state["status"] = "done"
     job_state["ended_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    job_state["reported_comment_count"] = reported_count
+    job_state["captured_comment_count"] = captured
+    job_state["coverage"] = coverage
+    job_state["collection_status"] = collection_status
+    if captured < reported_count:
+        job_state["collection_reason"] = "no_new_comments"
     save_job(video_id, job_state)
 
-    print(f"[collector] Done. {len(all_raw)} raw comments → {out_path}")
+    # Telemetri CDP (poin #6/#9)
+    print(f"[cdp-count] observed={cdp_counters['observed']} comment_like={cdp_counters['comment_like']} "
+          f"parsed_ok={cdp_counters['parsed_ok']} comments={cdp_counters['comments']}")
+    print(f"[collector] Done. {captured} raw comments → {out_path}")
+    print(f"[collector] reported={reported_count} captured={captured} coverage={coverage} status={collection_status}")
     browser.stop()
 
     return {
         "video_id": video_id,
         "output": str(out_path),
-        "comments": len(all_raw),
+        "comments": captured,
         "job_id": job_state["job_id"],
+        "reported_comment_count": reported_count,
+        "coverage": coverage,
+        "collection_status": collection_status,
     }
 
 
