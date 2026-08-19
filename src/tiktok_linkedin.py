@@ -50,35 +50,15 @@ from src.linkedin_consumer import (
     write_csv_report,
 )
 
-# ── Config (LLM enrichment — tetap di consumer, bukan pipeline) ───────────────
-# Source of truth: .env (BASE_URL, API_KEY, MODEL_*). Fallback keras jika .env
-# tidak ada, agar skrip tetap bisa jalan standalone.
-def _env_load() -> dict:
-    env = {}
-    p = Path(__file__).parent / ".env"
-    if p.exists():
-        for line in p.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            env[k.strip()] = v.strip()
-    return env
-
-_ENV = _env_load()
-
-DEEPSEEK_API = (_ENV.get("BASE_URL", "http://localhost:20128/v1").rstrip("/") + "/chat/completions")
-DEEPSEEK_KEY = _ENV.get("API_KEY", "")
-DEEPSEEK_MODEL = _ENV.get("MODEL_PLANNER", "oc/deepseek-v4-flash-free")
-# Chain fallback: Gemini (cepat) dulu → model planner → fallback → claude-work.
-# Per arahan: Gemini baik untuk vision + eksekusi plan matang, TAPI buruk utk
-# reasoning → ganti abelink dengan claude-work (reasoning kuat + self-improving:
-# semakin sering dipakai, sistem semakin pintar — arah menuju Mark).
-GEMINI_MODEL = _ENV.get("MODEL_VISION_DEFAULT", "gc/gemini-3.1-flash-lite")
-ENRICH_MODELS = [GEMINI_MODEL, DEEPSEEK_MODEL, _ENV.get("MODEL_PLANNER_FALLBACK", "ac/deepseek-v4-flash"), "claude-work"]
-# Vision: default OCR → fallback mimo
-VISION_MODEL = _ENV.get("MODEL_VISION_DEFAULT", "gc/gemini-3.1-flash-lite")
-VISION_MODEL_FALLBACK = _ENV.get("MODEL_VISION_OCR", "oc/mimo-v2.5-free")
+# ── Config (shared via src/config.py) ───────────────────────────────────────
+from src.config import (
+    LLM_API as DEEPSEEK_API,
+    LLM_KEY as DEEPSEEK_KEY,
+    LLM_MODEL as DEEPSEEK_MODEL,
+    ENRICH_MODELS,
+    VISION_MODEL,
+    VISION_MODEL_FALLBACK,
+)
 
 LINKEDIN_URL_RE = re.compile(r"linkedin\.com/in/([A-Za-z0-9_-]+)")
 
