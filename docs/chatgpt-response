@@ -1,691 +1,127 @@
-* Gw sudah cek repo `Abelion512/tiktok-comment-scrapper`, bukan cuma lihat nama repo. Saat ini repo isinya masih sangat terpusat di satu `tiktok_linkedin.py` sekitar 46 KB, plus cookie exporter, `run.sh`, dan requirements. Repo-nya private dan branch utamanya `main`.
-* Dari implementasi yang ada, **core scraper lu sebenarnya sudah cukup advanced untuk tahap collector**, terutama karena menggabungkan DOM scraping dengan CDP network capture, retry navigation, comment-panel detection, scrolling, dan dedup sementara.
-* Yang kurang sekarang bukan "scraping lebih canggih", tetapi **data architecture setelah scraping**. Kode lu masih sangat terasa sebagai tool automation satu script, bukan data acquisition pipeline. Itu yang bakal membatasi proyek lu kalau corpus-nya mulai besar.
+# Social Data Engine — Project Direction
 
-## Yang paling perlu di-improve
+## Identity
 
-### 1. Pisahkan Collector dari Processor
+* **Repo title:** `Social Data Engine`
+* **Project title:** **Social Data Engine**
+* **Primary direction:** this is no longer a TikTok scraper and not an LLM training project. TikTok is one provider among many.
+* **Goal:** build infrastructure to collect, clean, verify, connect, and transform digital social data into behavioral/social knowledge usable by various consumers.
+* **Origin:** project started as neuroscience/psychology exploration, but the scientific framing is clarified as **digital behavioral data / computational social science**. The data platform is not raw neuroscience data, and psychological inference must not be conflated with observation.
+* **Consumers:** Mark is one consumer. Others include behavioral research, analytics, specialist models, dataset export, social graph, and cross-platform analysis.
+* **Multi-provider:** TikTok, LinkedIn, YouTube, Reddit, and other providers are adapters, not separate projects. Data is converted to a shared canonical schema.
+* **Cross-platform:** data from multiple providers connects via entity resolution and evidence — TikTok ↔ LinkedIn ↔ Mark. Never treat identity match as certainty. Store confidence and provenance.
+* **Social engineering boundary:** do not define this project as a human manipulation tool. Focus on social/behavioral intelligence, computational social science, research, social context, and interaction analysis. Avoid features designed to exploit individual weaknesses or manipulate targets.
+* **Core data model:** `Observation`, `Entity`, `Content`, `Relationship`, `Annotation`, `Evidence`, `Provenance`, `Confidence`.
+* **Data hierarchy:** clearly distinguish `observed data` from `model annotation` and `inference`. Never convert "user wrote X" into "user has psychological condition Y" without research basis.
+* **Pipeline:** `collect → raw → normalize → dedup → context join → quality gate → annotation → verification → curated → knowledge/export`.
+* **Raw data:** do not destructively clean. Preserve `text_raw` and `text_normalized`, provenance, collector version, pipeline version, timestamps, source, IDs, parent IDs, context, and capture method.
+* **Conversation structure:** preserve parent/reply threading. A comment's meaning is derived from its conversation context, not just its text in isolation.
 
-Sekarang konsepnya kira-kira:
-
-```text
-TikTok
-  ↓
-capture_comments()
-  ↓
-processing
-  ↓
-LinkedIn matching
-```
-
-Gw sarankan jadi:
-
-```text
-                    TikTok
-                      │
-                      ▼
-                ┌───────────┐
-                │ Collector │
-                └─────┬─────┘
-                      ▼
-                  RAW DATA
-                      │
-                      ▼
-              ┌──────────────┐
-              │ Data Pipeline│
-              └──────┬───────┘
-                     │
-       ┌─────────────┼─────────────┐
-       ▼             ▼             ▼
-   cleaned       enriched       rejected
-       │             │
-       └──────┬──────┘
-              ▼
-        curated corpus
-              │
-        ┌─────┼─────┐
-        ▼     ▼     ▼
-      RAG   Stats  Gold Set
-```
-
-Saat ini scraper lu masih mencampurkan **TikTok acquisition + enrichment + LinkedIn action** dalam satu aplikasi. Bahkan konfigurasi model enrichment dan vision ada di script collector yang sama.
-
-Untuk eksperimen awal itu praktis. Untuk pipeline data, itu akan jadi utang teknis.
-
----
-
-## 2. Jangan simpan komentar sebagai objek "final"
-
-Di code sekarang ada fallback object seperti:
-
-```json
-{
-  "username": "...",
-  "display_name": "",
-  "comment_text": "...",
-  "images": [],
-  "likes": 0,
-  "replies": 0,
-  "comment_id": "",
-  "create_time": 0
-}
-```
-
-Ini justru red flag paling besar untuk tujuan lu sekarang.
-
-Karena lu kehilangan **provenance dan context**.
-
-Minimal data mentah harus punya:
+## Architecture
 
 ```text
-source
-video
-comment
-author
-parent
-engagement
-timestamp
-collector
-capture_method
-raw_payload
+TikTok / LinkedIn / YouTube / Reddit
+         ↓
+     Collector Adapters
+         ↓
+     Raw Data (immutable)
+         ↓
+     Normalize → Dedup → Context Join
+         ↓
+     Quality Gate
+         ↓
+     Annotation → Verification
+         ↓
+     Curated Social Knowledge
+         ↓
+     Mark RAG / Knowledge
+         ↓
+     Cloud LLM reasoning
 ```
 
-Contohnya:
+Mark should consume useful knowledge, context, and evidence rather than blindly importing raw social data.
 
-```json
-{
-  "schema_version": "1.0",
-  "source": "tiktok",
-  "video_id": "...",
-  "video_url": "...",
-  "comment_id": "...",
-  "parent_comment_id": null,
-  "author_id": "...",
-  "author_handle": "...",
-  "text_raw": "...",
-  "likes": 123,
-  "reply_count": 8,
-  "create_time": 1750000000,
-  "capture_method": "cdp",
-  "collector_version": "0.3.0",
-  "captured_at": "2026-08-16T10:00:00+07:00"
-}
-```
+## Cross-Platform Identity
 
-Kalau nanti TikTok berubah struktur response, lu masih punya jejak.
+Cross-platform connections are a core capability.
 
----
-
-# 3. Tambahkan schema versioning
-
-Ini kecil tapi sangat penting.
-
-Misalnya:
+Example:
 
 ```text
-raw.v1
-normalized.v1
-enriched.v1
-curated.v1
-```
-
-Kenapa?
-
-Karena lu pasti akan mengubah preprocessing.
-
-Hari ini:
-
-```text
-"bangeeeet" → "banget"
-```
-
-Besok lu sadar:
-
-```text
-"bangeeeet"
-```
-
-sebenarnya berguna untuk expressive intensity.
-
-Kalau datanya sudah diproses destructively, informasi aslinya hilang.
-
-Jadi:
-
-```text
-text_raw
-text_normalized
-```
-
-harus hidup berdampingan.
-
----
-
-# 4. Dedup lu sekarang terlalu sederhana
-
-Dari kode yang gw lihat, dedup DOM masih berbasis key teks atau kombinasi username + image, sementara CDP path juga membuat key berdasarkan potongan teks.
-
-Ini cukup untuk:
-
-```text
-DOM duplicate
-```
-
-tetapi belum cukup untuk:
-
-```text
-"bagus banget"
-"Bagus banget"
-"bagus bgttt"
-"bagus banget 😭"
-```
-
-Lu perlu tiga tingkat:
-
-```text
-Exact dedup
-    ↓
-Normalized dedup
-    ↓
-Near duplicate
-```
-
-### Exact
-
-Hash raw text.
-
-### Normalized
-
-```text
-lowercase
-Unicode normalization
-whitespace normalization
-```
-
-### Near duplicate
-
-Gunakan similarity ringan, bukan LLM.
-
-Misalnya:
-
-```text
-MinHash / SimHash
-```
-
-Jadi bukan membuang slang, tapi mendeteksi spam/copy-paste.
-
----
-
-# 5. Pisahkan "raw comment" dan "conversation unit"
-
-Ini akan sangat berguna untuk RAG.
-
-Komentar tunggal:
-
-```text
-"anjir relate"
-```
-
-tidak selalu berguna.
-
-Tetapi:
-
-```text
-Parent:
-"kalau kerja remote enak gak?"
-
-Reply:
-"enak sih, tapi sepi"
-
-Reply:
-"anjir relate 😭"
-```
-
-sangat berbeda.
-
-Jadi buat:
-
-```text
-comment
-thread
-conversation_window
-```
-
-Jangan cuma `comment`.
-
----
-
-# 6. Tambahkan Context Snapshot
-
-Ini menurut gw **prioritas nomor satu setelah schema**.
-
-Setiap komentar harus bisa ditelusuri ke:
-
-```text
-video caption
-hashtags
-creator
-video timestamp
-possibly transcription
-```
-
-Karena:
-
-> "gue juga"
-
-sendirian nilainya rendah.
-
-Dengan context:
-
-```text
-Video:
-"first day kerja setelah resign"
-
-Comment:
-"gue juga"
-
-```
-
-baru memiliki semantic value.
-
-Jadi:
-
-```text
-video_context
-    +
-comment
-    +
-parent_context
-```
-
-menjadi unit RAG.
-
----
-
-# 7. Jangan langsung LLM-enrich semua komentar
-
-Lu sekarang sudah punya `DEEPSEEK_API`, `ENRICH_MODELS`, dan `VISION_MODEL` di collector.
-
-Ini bagus untuk eksperimen, tapi jangan sampai pipeline menjadi:
-
-```text
-1 juta comments
-→ 1 juta API calls
-```
-
-Karena manusia menemukan cara baru membakar quota setiap kali diberi API key.
-
-Pakai **gating**:
-
-```text
-100,000 raw comments
-        ↓
-heuristic filter
-        ↓
-60,000
-        ↓
-dedup
-        ↓
-25,000
-        ↓
-importance score
-        ↓
-8,000
-        ↓
-LLM enrichment
-```
-
-LLM hanya dipakai untuk data yang memang membutuhkan interpretasi.
-
----
-
-# 8. Buat Quality Score, bukan cuma sentiment
-
-Jangan cuma:
-
-```text
-sentiment = positive
-```
-
-Buat:
-
-```json
-{
-  "quality": 0.91,
-  "semantic_density": 0.84,
-  "context_dependence": 0.72,
-  "spam_probability": 0.02,
-  "toxicity": 0.03,
-  "language_confidence": 0.98,
-  "novelty": 0.77
-}
-```
-
-Lalu:
-
-```text
-curated_score =
-    quality
-    × context
-    × novelty
-    × authenticity
-```
-
-Jadi dataset matang bukan sekadar "komentar yang bersih".
-
----
-
-# 9. Tambahkan `data lineage`
-
-Ini wajib kalau target lu dataset yang bisa berkembang.
-
-Setiap record tahu:
-
-```text
-collector version
-pipeline version
-model version
-annotation version
-verification method
-```
-
-Contoh:
-
-```json
-{
-  "provenance": {
-    "collector": "tiktok-scrapper@0.4.0",
-    "normalizer": "pipeline@1.2.0",
-    "annotator": "deepseek-v4-flash",
-    "verifier": "nemotron-super",
-    "embedding": "model-x",
-    "processed_at": "2026-08-16T10:20:00+07:00"
-  }
-}
-```
-
-Ini yang membuat dataset lu bisa **direproses**, bukan artefak sekali jadi.
-
----
-
-# 10. Ganti output dari JSON dump menjadi Parquet + JSONL
-
-Untuk pipeline:
-
-```text
-JSONL
-```
-
-bagus untuk interchange dan debugging.
-
-Untuk corpus besar:
-
-```text
-Parquet
-```
-
-lebih cocok untuk analytics/data processing.
-
-Struktur:
-
-```text
-data/
-├── raw/
-│   └── 2026-08-16/
-├── normalized/
-├── enriched/
-├── curated/
-├── rejected/
-└── manifests/
-```
-
-Jangan taruh satu:
-
-```text
-comments_final.json
-```
-
-yang makin lama makin mirip kuburan data.
-
----
-
-# 11. Buat `dataset manifest`
-
-Misalnya:
-
-```json
-{
-  "dataset_id": "tiktok-id-social-2026-08",
-  "version": "0.3.0",
-  "source_count": 148,
-  "video_count": 532,
-  "comment_count": 38142,
-  "accepted": 22481,
-  "rejected": 15661,
-  "languages": {
-    "id": 0.82,
-    "en": 0.12,
-    "mixed": 0.06
-  }
-}
-```
-
-Ini nanti memungkinkan lu melakukan:
-
-```text
-dataset diff
-dataset audit
-pipeline regression
-quality monitoring
-```
-
----
-
-# 12. Pisahkan "data collection" dengan "TikTok → LinkedIn"
-
-Ini sebenarnya perubahan arsitektur yang cukup penting.
-
-Nama file sekarang:
-
-`tiktok_linkedin.py`
-
-dan header-nya memang jelas bahwa tujuan script adalah **TikTok Comment → LinkedIn Connect Pipeline**.
-
-Kalau lu sekarang mau mengembangkan dataset, gw justru akan ubah konsep repo:
-
-```text
-tiktok-comment-scrapper
-```
-
-menjadi:
-
-```text
-TikTok Data Acquisition Engine
-```
-
-Lalu LinkedIn menjadi consumer terpisah:
-
-```text
-tiktok collector
+TikTok identity
        ↓
-dataset
+entity resolution
        ↓
-lead matcher
+LinkedIn identity
        ↓
-linkedin automation
+shared Entity
 ```
 
-Dengan begitu nanti lu bisa punya consumer lain:
+Identity matches must include:
 
-```text
-TikTok
-   ↓
-Corpus
- ├─→ Sentiment Analytics
- ├─→ Trend Detector
- ├─→ RAG
- ├─→ Dataset Export
- └─→ LinkedIn Lead Matching
-```
+* confidence
+* evidence
+* source
+* provenance
 
-Ini jauh lebih scalable.
+Never represent uncertain identity resolution as absolute truth.
 
----
+## Social Engineering Boundary
 
-# 13. Buat tahap `annotation` dan `verification`
+The project may support:
 
-Pipeline matang yang gw bayangkan:
+* social research
+* behavioral analysis
+* audience research
+* social graph analysis
+* context-aware communication
+* public-information synthesis
+* research-oriented identity resolution
 
-```text
-COLLECT
-   ↓
-RAW
-   ↓
-NORMALIZE
-   ↓
-DEDUP
-   ↓
-LANGUAGE
-   ↓
-CONTEXT JOIN
-   ↓
-QUALITY FILTER
-   ↓
-LLM ANNOTATION
-   ↓
-VERIFICATION
-   ↓
-CURATION
-   ↓
-INDEX
-```
+Do not design functionality whose purpose is to identify or exploit personal weaknesses, automate deception, or manipulate individuals.
 
-Dan yang penting:
+## YAGNI / Ponytail Principle
 
-**setiap stage idempotent.**
+Follow this project rule:
 
-Artinya kalau pipeline berhenti di:
+Build the smallest architecture that is actually justified.
 
-```text
-37,291 / 50,000
-```
+Do not prematurely add:
 
-lu tidak perlu mengulang dari awal.
+* distributed processing
+* custom databases
+* custom vector databases
+* local LLM infrastructure
+* training infrastructure
+* Parquet before corpus size requires it
+* speculative abstractions
 
----
+Reuse existing infrastructure where possible.
 
-# 14. Tambahkan `job/checkpoint` system
+However, do not simplify away:
 
-Scraper lu sekarang punya state untuk LinkedIn connections.
+* validation
+* data-loss protection
+* provenance
+* security
+* privacy safeguards
+* collection completeness
+* test coverage for non-trivial logic
 
-Konsep yang sama bisa dipakai ke collector.
+## Success Criteria
 
-Misalnya:
+The project is successful when collected data produces useful downstream value.
 
-```json
-{
-  "job_id": "job_20260816_001",
-  "video_id": "...",
-  "cursor": 18273,
-  "comments_seen": 4832,
-  "comments_written": 4701,
-  "status": "paused"
-}
-```
+Possible proof points:
 
-Kemudian:
+1. A behavioral research dataset can be produced reproducibly.
+2. A specialist emotion/social-language model can be trained or evaluated from the resulting gold data.
+3. Mark can answer or reason better using social knowledge.
+4. Multiple providers can contribute to one canonical social graph.
+5. Another application can consume the same curated dataset without depending on TikTok-specific internals.
 
-```bash
-scraper resume job_20260816_001
-```
+The success metric is therefore not "scraped comment count".
 
-Itu akan jauh lebih penting ketika mulai scraping ratusan video.
+The real metric is:
 
----
-
-# 15. Untuk Mark: output akhirnya jangan langsung masuk memory
-
-Ini keputusan penting berdasarkan diskusi kita sebelumnya.
-
-Pipeline:
-
-```text
-TikTok
- ↓
-Curated Corpus
- ↓
-Embedding
- ↓
-Social Knowledge Index
- ↓
-Mark RAG
-```
-
-**Bukan:**
-
-```text
-TikTok
- ↓
-Mark memory
-```
-
-Dan ini cocok dengan Mark yang memang sudah punya Orama sebagai vector/hybrid retrieval layer dan memory store sendiri.
-
-Nanti Mark punya:
-
-```text
-/user-memory
-/social-knowledge
-/documents
-/chat-archive
-```
-
-bukan satu ember besar bernama `memory`.
-
----
-
-# 16. Untuk use case lu, gw akan prioritaskan begini
-
-| Priority | Improvement                     | Nilai |
-| -------- | ------------------------------- | ----- |
-| P0       | Raw/normalized schema           | ★★★★★ |
-| P0       | Context + parent/reply relation | ★★★★★ |
-| P0       | Collector/processor separation  | ★★★★★ |
-| P0       | Provenance/versioning           | ★★★★★ |
-| P1       | Multi-stage dedup               | ★★★★★ |
-| P1       | Quality scoring                 | ★★★★★ |
-| P1       | Checkpoint/resume               | ★★★★☆ |
-| P1       | Parquet + JSONL                 | ★★★★☆ |
-| P2       | LLM enrichment                  | ★★★★☆ |
-| P2       | Social knowledge extraction     | ★★★★★ |
-| P2       | Embedding/index                 | ★★★★☆ |
-| P3       | Gold dataset                    | ★★★★☆ |
-| P3       | Future training export          | ★★★☆☆ |
-
-### Yang paling penting
-
-Menurut gw repo lu **tidak perlu dirombak menjadi "LLM training framework"**.
-
-Justru jadikan dia:
-
-```text
-              TikTok Data Engine
-                     │
-        ┌────────────┼────────────┐
-        ↓            ↓            ↓
-   Raw Corpus   Curated Corpus   Analytics
-                    │
-                    ↓
-             Social Knowledge
-                    │
-              ┌─────┴─────┐
-              ↓           ↓
-             RAG       Gold Dataset
-              │
-              ↓
-           Mark Agent
-```
-
-Jadi **scraper lu menjadi upstream data infrastructure untuk Mark**, bukan sekadar script yang mengambil komentar lalu menghitung sentiment.
-
-Dan satu temuan yang cukup jelas dari repo saat ini: `tiktok_linkedin.py` sudah punya collector yang cukup kompleks, termasuk CDP + DOM fallback, retry, reply capture, enrichment model, vision model, dan LinkedIn state management.  Karena itu, **jangan tambah fitur dulu secara horizontal**. Refactor boundary-nya dulu. Itu akan memberi efek terbesar.
-
+**useful, reproducible, provenance-aware digital behavioral knowledge.**
