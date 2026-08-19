@@ -73,6 +73,110 @@ QUALITY_MIN = 0.30      # curated_score minimum
 SEMANTIC_DENSITY_MIN = 0.15
 SPAM_MAX = 0.85
 TOXICITY_MAX = 0.80
+GATING_THRESHOLD = 0.15  # quality_score minimum utk LLM call (hemat token)
+LLM_MAX_TIMEOUT = 120    # max seconds untuk seluruh LLM enrichment stage
+
+# ── 9Router LLM config (shared via src/config.py) ───────────────────────────
+from src.config import LLM_API, LLM_KEY, LLM_MODEL, ENRICH_MODELS
+
+# ── LLM enrichment: identity extraction via 9Router ──────────────────────────
+def llm_enrich_identities(records: List[dict], max_timeout: int = None) -> List[Optional[dict]]:
+    """
+    Infer real names + companies dari komentar via 9Router (OpenAI-compatible).
+    Batch processing: 10 records per API call, chain fallback ENRICH_MODELS.
+
+    Args:
+        records: List of enriched records to process.
+        max_timeout: Max seconds for entire operation (default: LLM_MAX_TIMEOUT).
+
+    Returns list of identity dicts (same order as input), None if not inferable.
+    """
+    import requests as _req
+
+    if max_timeout is None:
+        max_timeout = LLM_MAX_TIMEOUT
+    start_time = time.time()
+    identities: List[Optional[dict]] = []
+    BATCH = 10
+    for start in range(0, len(records), BATCH):
+        # Timeout check
+        elapsed = time.time() - start_time
+        if elapsed > max_timeout:
+            print(f"[!] llm_enrich timeout ({max_timeout}s), processed {start}/{len(records)} records")
+            identities.extend([None] * (len(records) - start))
+            break
+        chunk = records[start:start + BATCH]
+        batch = [{
+            "username": r.get("author_handle", ""),
+            "display_name": r.get("display_name", ""),
+            "comment": r.get("text_raw", "")[:200],
+        } for r in chunk]
+
+        prompt = f"""Analyze TikTok commenters. Infer real identity.
+
+For each:
+- real_name: actual name (from display_name or context). Only if display_name looks like a real name (e.g. "John Smith"), not usernames like "funny_cat_42"
+- company: employer/company if mentioned or inferable
+- role: job title if mentioned
+- linkedin_hint: best search query for LinkedIn
+- confidence: 0-1
+
+Commenters:
+{json.dumps(batch, indent=2, ensure_ascii=False)}
+
+Return JSON array. null if not inferable."""
+
+        headers = {"Content-Type": "application/json"}
+        if LLM_KEY:
+            headers["Authorization"] = f"Bearer {LLM_KEY}"
+
+        content = None
+        last_err = None
+        for model in ENRICH_MODELS:
+            for attempt in (1, 2):
+                try:
+                    resp = _req.post(LLM_API, json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": 2048,
+                        "temperature": 0.1,
+                        "stream": False,
+                    }, headers=headers, timeout=120)
+                    result = resp.json()
+                    if "error" in result or "choices" not in result:
+                        last_err = f"{model} (try {attempt}): {str(result.get('error', result.keys()))[:150]}"
+                        print(f"[!] llm_enrich {last_err}")
+                        time.sleep(3 * attempt)
+                        continue
+                    content = result["choices"][0]["message"]["content"]
+                    if content and content.strip():
+                        break
+                    last_err = f"{model} (try {attempt}): empty content"
+                    print(f"[!] llm_enrich {last_err}")
+                except Exception as e:
+                    last_err = f"{model} (try {attempt}): {type(e).__name__}: {e}"
+                    print(f"[!] llm_enrich {last_err}")
+                    time.sleep(3 * attempt)
+            if content and content.strip():
+                break
+        if not content or not content.strip():
+            print(f"[!] llm_enrich all models failed; last: {last_err}")
+            identities.extend([None] * len(chunk))
+            continue
+        # Parse JSON response (handle markdown fences)
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0]
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0]
+        try:
+            parsed = json.loads(content.strip())
+            if not isinstance(parsed, list):
+                parsed = [parsed]
+            identities.extend(parsed[:len(chunk)])
+        except json.JSONDecodeError as e:
+            print(f"[!] llm_enrich parse fail: {e}; content={content[:300]!r}")
+            identities.extend([None] * len(chunk))
+    return identities
 
 
 # ── Hashing helpers for 3-level dedup ─────────────────────────────────────────
@@ -246,8 +350,9 @@ def quality_score(rec: dict) -> float:
     repeat_chars = len(re.findall(r"(.)\1{3,}", text))  # "banggget"
     emoji_count = sum(1 for c in text if ord(c) > 0x2700)
     digit_count = sum(c.isdigit() for c in text)
-    url_count = len(re.findall(r"https?://", text))
-    if url_count > 1:  # link spam — mirror cleanse_comments rule (>1 http)
+    # URL detection: protocol-prefixed + bare domains (www.example.com)
+    url_count = len(re.findall(r"https?://|\bwww\.[\w.-]+\.[a-z]{2,}", text, re.I))
+    if url_count > 1:  # link spam — >1 URL = suspicious
         spam_probability = 0.95
     else:
         spam_signals = repeat_chars + emoji_count * 0.1 + (digit_count / max(len(text), 1))
@@ -299,14 +404,16 @@ def stage_quality_gate(video_id: str) -> Dict:
     return {"status": "ok", "video_id": video_id, "curated": len(kept), "rejected": len(rejected)}
 
 
-# ── LLM gate (placeholder — hanya enrichment ringan) ────────────────────────────
-# ponytail: LLM enrichment dipisahkan. Untuk milestone awal, quality_score()
-# cukup untuk gating. Integrasikan di enrichment stage bila model ready.
-
+# ── Stage 3: Enrich (heuristic + LLM identity via 9Router) ───────────────────
 def stage_enrich(video_id: str) -> Dict:
     """
-    Deduped-normalize → Enriched (quality annotation).
-    Tanpa LLM call, hanya komputasi statistik.
+    Deduped-normalize → Enriched (quality annotation + LLM identity).
+
+    Flow:
+      1. Heuristic quality_score() untuk semua komentar
+      2. Gating: hanya kirim ke LLM kalau score >= GATING_THRESHOLD
+      3. LLM identity extraction via 9Router (chain fallback → claude-work)
+      4. Merge identity ke enriched records
     """
     dedup_file = NORM_DIR / today_stamp() / f"{video_id}.deduped.jsonl"
     enrich_file = ENRICH_DIR / today_stamp() / f"{video_id}.jsonl"
@@ -314,7 +421,8 @@ def stage_enrich(video_id: str) -> Dict:
     if not dedup_file.exists():
         return {"status": "no_deduped", "video_id": video_id}
 
-    enriched = []
+    # Step 1: Read + heuristic scoring
+    enriched: List[dict] = []
     with dedup_file.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -342,8 +450,37 @@ def stage_enrich(video_id: str) -> Dict:
             }
             enriched.append(rec)
 
+    # Step 2: Gating — filter records yang lolos threshold utk LLM call
+    gated = [r for r in enriched if r["quality"]["curated_score"] >= GATING_THRESHOLD]
+    skipped = len(enriched) - len(gated)
+    print(f"[enrich] {video_id}: {len(enriched)} records, {len(gated)} pass gate (>= {GATING_THRESHOLD}), {skipped} skipped")
+
+    # Step 3: LLM identity extraction via 9Router
+    if gated and LLM_KEY:
+        print(f"[enrich] {video_id}: calling 9Router for identity extraction ({len(gated)} records)...")
+        try:
+            identities = llm_enrich_identities(gated)
+            # Map identities back ke enriched records (hanya yang gated)
+            gated_idx = 0
+            for i, rec in enumerate(enriched):
+                if rec["quality"]["curated_score"] >= GATING_THRESHOLD:
+                    identity = identities[gated_idx] if gated_idx < len(identities) else None
+                    rec["identity"] = identity
+                    if identity:
+                        rec["provenance"]["annotator"] = f"llm@{LLM_MODEL}"
+                        rec["provenance"]["model"] = LLM_MODEL
+                    gated_idx += 1
+            n_identity = sum(1 for r in enriched if r.get("identity") and r["identity"].get("real_name"))
+            print(f"[enrich] {video_id}: {n_identity} identities found via LLM")
+        except Exception as e:
+            print(f"[!] llm_enrich failed: {e}")
+    elif not LLM_KEY:
+        print(f"[enrich] {video_id}: no 9Router API_KEY — identity extraction skipped")
+
+    # Step 4: Write enriched output
     write_jsonl(str(enrich_file), enriched, append=False)
-    print(f"[enrich] {video_id}: {len(enriched)} enriched → {enrich_file.name}")
+    n_with_id = sum(1 for r in enriched if r.get("identity") and r["identity"].get("real_name"))
+    print(f"[enrich] {video_id}: {len(enriched)} enriched ({n_with_id} with identity) → {enrich_file.name}")
     return {"status": "ok", "video_id": video_id, "output": len(enriched)}
 
 
@@ -493,6 +630,7 @@ def main():
     parser.add_argument("--stage", choices=list(STAGES.keys()), help="Run specific stage only")
     parser.add_argument("--force", action="store_true", help="Re-process meski output sudah ada (update schema/fix)")
     parser.add_argument("--manifest", action="store_true", help="Generate manifest only")
+    parser.add_argument("--export-mark", action="store_true", help="Export curated → MARK-ready JSON")
     args = parser.parse_args()
     global FORCE
     FORCE = args.force
@@ -501,6 +639,15 @@ def main():
         vid = args.video
         m = generate_manifest(vid)
         print(json.dumps(m, indent=2))
+        return
+
+    if args.export_mark:
+        from src.mark_export import export_video, export_all
+        if args.video:
+            result = export_video(args.video)
+        else:
+            result = export_all()
+        print(json.dumps(result, indent=2))
         return
 
     if args.video:

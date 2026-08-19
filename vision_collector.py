@@ -26,6 +26,9 @@ COOKIE_FILE = Path.home() / ".tiktok-linkedin" / "tiktok-cookies.json"
 RAW_DIR = Path(__file__).parent / "data" / "raw"
 PROJECT_ENV = Path(__file__).parent / ".env"
 
+# Shared config — single source of truth untuk 9Router settings
+from src.config import LLM_API as _CFG_API, LLM_KEY as _CFG_KEY, VISION_MODEL as _CFG_VISION
+
 URL = "https://www.tiktok.com/@enxayeti/video/7669640839861112071"
 VIDEO_ID = "7669640839861112071"
 
@@ -58,6 +61,7 @@ LEVELS_JS = "document.querySelectorAll('[data-e2e^=\"comment-level-\"]').length"
 
 
 def _env():
+    """Load .env — fallback ke shared config kalau tidak ada."""
     e = {}
     if PROJECT_ENV.exists():
         for line in PROJECT_ENV.read_text().splitlines():
@@ -65,15 +69,22 @@ def _env():
             if line and "=" in line and not line.startswith("#"):
                 k, _, v = line.partition("=")
                 e[k.strip()] = v.strip()
+    # Gunakan shared config sebagai fallback
+    if not e.get("BASE_URL"):
+        e["BASE_URL"] = _CFG_API.rsplit("/chat/completions", 1)[0]
+    if not e.get("API_KEY"):
+        e["API_KEY"] = _CFG_KEY
+    if not e.get("MODEL_VISION_DEFAULT"):
+        e["MODEL_VISION_DEFAULT"] = _CFG_VISION
     return e
 
 
 def vision_ask(screenshot_b64: str, prompt: str) -> str:
     """Kirim screenshot + prompt ke Gemini vision via 9Router."""
     env = _env()
-    api = (env.get("BASE_URL", "http://localhost:20128/v1").rstrip("/") + "/chat/completions")
-    key = env.get("API_KEY", "")
-    model = env.get("MODEL_VISION_DEFAULT", "gc/gemini-3.1-flash-lite")
+    api = env.get("BASE_URL", _CFG_API.rsplit("/chat/completions", 1)[0]).rstrip("/") + "/chat/completions"
+    key = env.get("API_KEY", _CFG_KEY)
+    model = env.get("MODEL_VISION_DEFAULT", _CFG_VISION)
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
