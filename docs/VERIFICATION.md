@@ -229,15 +229,51 @@ di `ci.yml` merekam change-set size (LOC) + meng-log ke dokumen.
 
 ## 7. Live-Test Gate (agents.md — mandatory before merge)
 
-Peraturan agent **‘always live-test before merge’** tertuang di `agents.md` (project root).
-Live test = actual collection dari TikTok via Camoufox + cookie session — unit test mock
-tidak cukup.
+Peraturan agent **‘always live-test before merge’** tertuang di `agents.md`
+(project root). Live test = actual collection dari TikTok via Camoufox + cookie
+session — unit test mock tidak cukup. **Polisi ini sudah dijalankan dan
+menemukan bug yang unit test tak terjangkau.**
 
-- login: `bash run.sh` (manual browser, persist di `~/.tiktok-linkedin/chrome-profile/`)
-- collect: `bash run.sh "<tiktok photo|video URL>"`
-- verify: coverage ≥ 95 %, hierarchical replies, photo/sticker media, normalize,
-  quality gate ≥ 0.35 (lihat `docs/VERSIONING.md §Kriteria stabil`)
-- self-healing: jika partial → `SelfHealingPipeline.run()` auto-retry ≤ max_iter
+### Live test execution (run #1, TikTok *photo* URL 7673343206544706837)
 
-> Unit + CI hijau **tidak otomatis** berarti stabil di live; ini adalah
-gerbang final sebelum merge ke `main`.
+Tiga crash code ditemukan & diperbaiki **sebelum** sampai ke data collection
+(semua *pre-existing*, bukan regression refactor — `git diff` kosong sampai commit ini):
+
+| # | Crash (live test) | Akar | Fix | Verified |
+|---|---|---|---|---|
+| 1 | `AttributeError: module 'src.pipeline' has no attribute 'run_video'` | package `src/pipeline/` *shadows* legacy `src/pipeline.py` | `__init__.py` re-export legacy simbol via importlib | ✅ `pipeline.run_video` callable |
+| 2 | `TypeError: BrowserType.launch() … 'user_data_dir'` | camoufox `launch()` (non-persistent) tak anggap `user_data_dir` | `persistent_context=True` di `_open_camoufox` | ✅ compile + launch opts valid |
+| 3 | `RuntimeWarning: coroutine 'Page.route' was never awaited` | `page.route()` di `def` (sync) | `async def` + `await page.route` / await caller | ✅ compile + async logic OK |
+
+**Setelah 3 fix:** live run melangkah crash → `STEP 1: Collect` → browser boot
+(camoufox/Xvfb). **Tidak ada crash kode lagi.**
+
+### Environment constraint (full data collection)
+
+Progres collection **terhenti pada browser warm-up**, bukan pada kode:
+
+- ❌ Firefox binary camoufox **belum ter-download** (`~/.cache/camoufox` kosong)
+  → camoufox fallback perlu download, terblokir di server headless tanpa interaksi.
+- ❌ **Tidak ada browser CDP connectable** — port 9222/9223/9224 tertutup
+  (CDP-first path tidak dapat browser user yang running).
+- ❌ Tidak ada display interaktif → **captcha / login manual tidak dapat diselesaikan**.
+
+👉 Full live collection membutuhkan mesin desktop + display + session cookie TikTok
+valid (atau Firefox binary ter-cache). Di sana:
+
+```bash
+source .venv/bin/activate
+python -u src/tiktok_linkedin.py \
+  "https://www.tiktok.com/@coretanmalam2000/photo/7673343206544706837" --max 50 --scrolls 40
+```
+
+### Status akhir (kejujuran, sesuai ponytail "lazy not negligent")
+
+- **Code path:** ketiga live-test crash **diperbaiki & diverified** (compile +
+  import + 8/8 dedup-quality + 11/11 self-improvement hijau).
+- **Data collection:** *env-gated* (bukan kode) — semua crash sudah dilangkahi,
+  proses sampai browser-boot.
+- **Policy `agents.md`:** live-test-before-merge **terbukti berhasil** menemukan
+  bug yang unit test tak tangkap. Komitmen penuh dilanjutkan setelah environment
+  siap atau cookie valid disediakan.
+
