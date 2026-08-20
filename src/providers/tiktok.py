@@ -15,6 +15,7 @@ import time
 from typing import List, Dict, Optional
 
 from src.providers.base import ProviderAdapter
+from src.harness.registry import harness
 from src.schema.canonical import Observation
 from src.schema.mapper import tiktok_to_canonical
 from src.tiktok_schema import RawComment, write_jsonl
@@ -87,3 +88,7 @@ class TikTokAdapter(ProviderAdapter):
         # Import sini untuk menghindari circular import
         from src.collector import collect_comments
         return await collect_comments(url, **kwargs)
+
+
+# Register TikTok as a routable provider on import (lazy side-effect).
+harness.register("tiktok", r"tiktok\.com", TikTokAdapter())

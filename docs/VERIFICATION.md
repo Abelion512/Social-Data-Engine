@@ -311,3 +311,27 @@ Live test **menemukan & memperbaiki 4 bug logika** (bukan hanya 3 crash):
 **Stabil MVP v1 kriteria:** Photo+Video URL ✅ · caption ✅ · **reply threaded 7/7 ✅** · normalize ✅ · quality 44/44 (0.992) ✅ · coverage 22% (guest rate-limit) · media schema-ready (komentar text-only)
 
 Server headless tidak bisa full-run (proses browser `exit -1`), tapi live test **proof-of-succeed** via run #2 + pipeline run_video real-time. Full coverage ≥95% butuh login full di desktop.
+
+## §7 Truth akhir — Pluggable harness + trace sampai tuntas (run #3)
+
+- **Pluggable registry:** `src/harness/registry.py` — provider dispatch by URL regex.
+  `registered: ['tiktok','linkedin']`. TikTok `video|photo` URL → tiktok; `linkedin.com` → linkedin.
+  Semua platform → canonical `Observation` (satu schema = komunikasi antar-platform).
+- **Trace sampai tuntas** `scripts/trace_comment.py` — follow 1 comment ID di SETIAP stage
+  (raw→normalized→deduped→enriched→curated), assert `raw.id == curated.id` +
+  `parent survives dedup` + `quality ≥ 0.35`.
+  - `trace-all` pada 44 curated: **✅ ALL 44 traced deterministically**, exit 0.
+  - Contoh reply threaded `7670523593819341576` (capture=route):
+    `parent=7669653882053739282` survives dedup → enriched → curated, quality 1.0.
+  - **7 route-replies** (capture=route), each → 7 *distinct* parents → all survivor di curated.
+    (7 identical 'connect kak' reply ke orang/parent berbeda = 7 unik, bukan 1.)
+- **MVP v1 stabil kriteria (video @enxayeti):**
+  | kriteria | hasil |
+  |---|---|
+  | Photo + Video URL | ✅ keduanya live-collected |
+  | caption | ✅ text_raw + video_context.caption |
+  | reply bertingkat di curated | ✅ **7 threaded (parent populated)** |
+  | quality ≥0.35 | ✅ 44/44 (mean 0.992, min 0.921) |
+  | normalize | ✅ 72→65 |
+  | coverage ≥95% | ⚠️ 22% guest (butuh login full di desktop) |
+  | media (photo/sticker) | schema+ekstraktor ada; komentar text-only (content-dependent) |
