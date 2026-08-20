@@ -103,6 +103,7 @@ Di `src/schema/canonical.py`, lima belas entitas inti (`chatgpt-response.md §Co
 | `docs/SELF-IMPROVEMENT.md` | Auto/Recursive Self-Improvement architecture (feedback loop) |
 | `docs/VERSIONING.md` | Semantik MVP v1 (TikTok+LinkedIn, kriteria stabil, pre-release checklist) |
 | `docs/superpowers/plans/2026-08-19-social-data-engine.md` | Rencana evolusi multi-provider |
+| `agents.md` | Agent operating rules + live-test-before-merge (MVP v1 stabilize gate) |
 
 ## Testing
 
