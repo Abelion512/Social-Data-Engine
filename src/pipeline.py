@@ -286,9 +286,16 @@ def stage_dedup(video_id: str) -> Dict:
                 continue
             rec = json.loads(line)
             text = rec.get("text_raw", "")
+            parent = rec.get("parent_comment_id", "") or ""
+            # thread-aware dedup: replies with the SAME text to DIFFERENT
+            # parents are NOT duplicates (e.g. 7x 'connect kak' replies to
+            # 7 different top-level comments = 7 distinct threaded replies).
+            # Fold parent into every dedup key so only exact/near duplicates
+            # *within the same parent* are rejected.
+            keyed = (parent + "\x00" + text) if parent else text
 
             # Level 1: exact
-            h_exact = hash_exact(text)
+            h_exact = hash_exact(keyed)
             if h_exact in seen_exact:
                 rec["_dedup_reject"] = "exact"
                 rejected.append(rec)
@@ -296,7 +303,7 @@ def stage_dedup(video_id: str) -> Dict:
             seen_exact.add(h_exact)
 
             # Level 2: normalized
-            h_norm = hash_normalized(text)
+            h_norm = hash_normalized(keyed)
             if h_norm in seen_normalized:
                 rec["_dedup_reject"] = "normalized"
                 rejected.append(rec)
@@ -304,7 +311,7 @@ def stage_dedup(video_id: str) -> Dict:
             seen_normalized.add(h_norm)
 
             # Level 3: near-duplicate (simhash, tolerance ≤2 bit flips)
-            sh = simhash(text)
+            sh = simhash(keyed)
             prefix = sh >> 48  # top 16 bits as bucket
             is_dup = False
             if prefix in seen_simhash:
