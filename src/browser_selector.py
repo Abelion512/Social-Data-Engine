@@ -247,7 +247,15 @@ async def _open_camoufox():
     except Exception:
         pass
 
-    browser_cm = AsyncCamoufox(headless=False, user_data_dir=str(PROFILE_DIR))
+    # persistent_context=True is required: camoufox/playwright only accepts
+    # `user_data_dir` on launch_persistent_context (not plain launch).
+    # Discovered via live test (TypeError: BrowserType.launch() got an
+    # unexpected keyword argument 'user_data_dir').
+    browser_cm = AsyncCamoufox(
+        headless=False,
+        user_data_dir=str(PROFILE_DIR),
+        persistent_context=True,
+    )
     cm = await browser_cm.__aenter__()
     page = await cm.new_page()
     return browser_cm, cm, page

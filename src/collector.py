@@ -282,10 +282,13 @@ IMAGE_ENRICH_JS = r"""(comment_ids) => {
 # ── Playwright route intercept: capture comment API responses ──────────────────
 # Menggantikan CDP Fetch intercept dari nodriver. Playwright route() bisa
 # intercept response body tanpa race condition.
-def _setup_route_intercept(page, captured_pages: list, counters: dict):
+async def _setup_route_intercept(page, captured_pages: list, counters: dict):
     """Setup page.route() untuk intercept TikTok comment API responses.
 
     Route callback: baca response body → parse → simpan ke captured_pages.
+    Must be async: Playwright's page.route() is a coroutine and must be
+    awaited, otherwise the route intercept is silently skipped (discovered
+    via live test: 'RuntimeWarning: coroutine Page.route was never awaited').
     """
     comment_api_re = re.compile(r"(comment|aweme).*list")
 
@@ -328,7 +331,7 @@ def _setup_route_intercept(page, captured_pages: list, counters: dict):
         label = "reply" if is_reply else "comment"
         print(f"[route] {label} page: +{len(page_data['comments'])}")
 
-    page.route("**/*", _on_route)
+    await page.route("**/*", _on_route)    # async — Playwright route intercept
     print("[collector] Playwright route intercept registered")
 
 
@@ -614,7 +617,7 @@ async def collect_video(
         print(f"[collector] Browser mode: {mode}")
 
         # Setup route intercept (replaces CDP Fetch intercept)
-        _setup_route_intercept(page, captured_pages, route_counters)
+        await _setup_route_intercept(page, captured_pages, route_counters)
 
         # Navigate with retry
         for attempt in range(3):
