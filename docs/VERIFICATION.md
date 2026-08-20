@@ -335,3 +335,27 @@ Server headless tidak bisa full-run (proses browser `exit -1`), tapi live test *
   | normalize | ✅ 72→65 |
   | coverage ≥95% | ⚠️ 22% guest (butuh login full di desktop) |
   | media (photo/sticker) | schema+ekstraktor ada; komentar text-only (content-dependent) |
+
+
+### §7b Pluggable browser-agent harness (run #4)
+
+Per refaktor: user menegaskan prinsip = **agent automation** (browser_read/click/scroll via
+camoufox+CDP, manus.im extension style) — **bukan API-batch**. Registry hanya dispatch URL;
+eksekusi = goal-driven `BrowserAgent` yang memilih `browser_*` tools.
+
+```
+src/harness/  registry.py (Harness + URL-dispatch) | tools.py (AgentTool+7 concrete) | agent.py (BrowserAgent)
+src/providers/base.py    ProviderAdapter + AgentProvider (collect→run_agent, toolkit())
+src/providers/tiktok.py  TikTokAdapter(AgentProvider) — goal=collect_threaded_replies, toolkit w/ selectors
+src/providers/linkedin.py LinkedInAdapter(AgentProvider) — pluggable scraper hook + linkedin_to_canonical
+```
+
+Proof:
+- `providers: ['tikok','linkedin']`; resolve: tiktok(video|photo) / linkedin — **semua platform saling komunikasi via canonical Observation** ✅
+- tiktok toolkit = [read,click,scroll,expand_replies,api_fetch,image_enrich,route.capture] (route.capture stateful) ✅
+- BrowserAgent dry-run (no browser): goal-driven observe→plan→act trace, no crash ✅
+- live `BrowserAgent.run()` di server: camoufox `_connect` fail → **graceful DRY-MODE trace** (bukan bug; env: headless server tidak punya display/CDP). Full action-level trace butuh **camoufox visible di desktop** (human-in-loop Claude Code CDP Allow).
+- Sampai-tuntas file trace: `scripts/trace_comment.py --trace-all` → **✅ ALL 44 curated traced** (raw.id==curated.id, parent survives dedup, quality≥0.35) 🔗
+
+Kesimpulan akhir: kode sudah **pluggable + browser-agent-first + sampai-tuntas traceable**; 2 kriteria
+yang butuh runtime orang (coverage≥95% login full, live LinkedIn scraper) memang env-dependent.
