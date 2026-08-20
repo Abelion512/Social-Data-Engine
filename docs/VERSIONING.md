@@ -82,3 +82,25 @@ python tests/test_self_improvement.py
 - [ ] `python tests/run_dedup_quality_tests.py && python tests/test_self_improvement.py`
 - [ ] Semua kriteria 1–14 di atas ✅
 - [ ] Tag: `git tag -a v1.0.0 -m "MVP v1: TikTok+LinkedIn stable"`
+
+## Versioning Automation
+
+Bump otomatis **major / minor / patch** via `scripts/version_bump.py`
+(deterministic, stdlib-only, dry-run by default — ponytail ladder).
+
+| Constants di-update | Lokasi | Authoritative |
+|---|---|---|
+| `PIPELINE_VERSION = "X.Y.Z"` | `src/schema/mapper.py:23` | ✅ semver master |
+| `SCHEMA_VERSION = "X.Y"` | `src/tiktok_schema.py:20` | ✅ data layer |
+| `COLLECTOR_VERSION = "X.Y.Z"` | `src/tiktok_schema.py:21` | ✅ mirrors pipeline |
+
+```bash
+python scripts/version_bump.py --bump minor          # preview (dry-run)
+python scripts/version_bump.py --bump patch --commit   # commit + tag vX.Y.Z
+python scripts/version_bump.py --bump minor --commit --push  # push tag
+```
+
+CI `.github/workflows/versioning.yml` → job **`auto-version-bump`** (workflow_dispatch `action=bump`, `bump=patch|minor|major`)
+atau **`versioning-check`** (`action=check`) untuk validasi manual.
+
+> 9Router / LLM model versions **never** dipush oleh tool ini — hanya data-layer constants.

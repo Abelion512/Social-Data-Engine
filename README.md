@@ -267,6 +267,10 @@ source .venv/bin/activate
 python tests/run_dedup_quality_tests.py
 python tests/test_self_improvement.py
 bash -n run.sh && zsh -n run.sh          # cross-shell syntax
+
+# versioning — dry-run dulu, lalu bump
+python scripts/version_bump.py --bump minor                  # preview
+git push && gh release create v$(python -c 'import importlib.util as u; s=u.spec_from_file_location("v","scripts/version_bump.py"); m=u.module_from_spec(s); s.loader.exec_module(m); print(".".join(map(str,m._read_current())))') --generate-notes
 ```
 
 ## License

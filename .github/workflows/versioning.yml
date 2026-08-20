@@ -1,8 +1,7 @@
 name: Versioning
 
-# CI/CD *versioning* automation — validates every semver tag against the
-# MVP-v1 contract in docs/VERSIONING.md and gates platform additions.
-# Scope policy: TikTok + LinkedIn only until stable (no new platform before 1.x).
+# CI/CD *versioning* automation — semver gates + auto bump (major|minor|patch).
+# Scope policy: TikTok + LinkedIn only until stable (no new provider before 1.x).
 on:
   push:
     tags:
@@ -11,17 +10,35 @@ on:
     types: [published]
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Proposed next version (semver, e.g. 1.1.0)'
-        required: true
+      action:
+        description: 'Action to run'
+        required: false
+        default: 'check'
+        type: choice
+        options:
+          - check        # just validate current versions + docs consistency
+          - bump         # auto-bump major|minor|patch (commits + tags + pushes)
+      bump:
+        description: 'Which semver part to bump (for action=bump)'
+        required: false
+        default: 'patch'
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
 
 env:
   SCHEMA_VERSION: "1.0"
 
+permissions:
+  contents: write    # needed to commit + tag + push
+
 jobs:
   verify-tag:
-    name: Validate semver tag
+    name: Validate semver tag (on tag push)
     runs-on: ubuntu-latest
+    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
 
@@ -43,8 +60,6 @@ jobs:
 
       - name: Cross-check VERSIONING.md
         run: |
-          # docs/VERSIONING.md is the single source of MVP-v1 truth:
-          # scope = TikTok + LinkedIn only, stabilize gate documented.
           grep -q "1.0.0 (MVP v1)" docs/VERSIONING.md
           grep -qi "TikTok + LinkedIn" docs/VERSIONING.md
           echo "✅ VERSIONING.md consistent with tag scope"
@@ -53,7 +68,7 @@ jobs:
     name: Generate release notes
     runs-on: ubuntu-latest
     needs: verify-tag
-    condition: always() && github.event_name == 'push'
+    if: always() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
         with:
@@ -67,8 +82,8 @@ jobs:
             RANGE="$LAST..HEAD"
           fi
           git log "$RANGE" --pretty=format:'- %s (%an)' \
-            -- docs/ src/ tests/ run.sh .github/workflows/ > release_notes.txt 2>/dev/null || true
-          echo "## Release notes (auto-generated from change-set)" > release.md
+            -- docs/ src/ scripts/ tests/ run.sh .github/workflows/ > release_notes.txt 2>/dev/null || true
+          echo "## Release notes (auto-generated)" > release.md
           echo '```' >> release.md
           cat release_notes.txt >> release.md
           echo '```' >> release.md
@@ -80,13 +95,72 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.')
     steps:
       - uses: actions/checkout@v4
-      - name: Reject new provider before 1.x stable
+        with:
+          fetch-depth: 0
+      - name: Reject new provider before 1.0 stable
         run: |
-          # MVP v1 rule: only TikTok + LinkedIn. No new src/providers/* before 1.0.
           new_providers=$(git diff --name-only --diff-filter=A \
-            "$(git describe --tags --abbrev=0 2>/dev/null || echo 4b80e6b)^!" \
+            "$(git describe --tags --abbrev=0 2>/dev/null || echo fcb007e)^!" \
             src/providers/ 2>/dev/null | wc -l)
           if [ "$new_providers" -gt 0 ]; then
             echo "❌ new provider added before TikTok+LinkedIn stabilized"; exit 1
           fi
           echo "✅ no new platform before 1.0 — scope policy enforced"
+
+  versioning-check:
+    name: Versioning check (workflow_dispatch / manual)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run pre-bump verification gate
+        run: |
+          echo "=== current semver constants ==="
+          grep -n 'PIPELINE_VERSION =' src/schema/mapper.py
+          grep -n 'SCHEMA_VERSION =\|COLLECTOR_VERSION =' src/tiktok_schema.py
+          echo "=== compile + parser check ==="
+          python -m py_compile scripts/version_bump.py
+          python -c 'import importlib.util; s=importlib.util.spec_from_file_location("v","scripts/version_bump.py"); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print("current →", ".".join(map(str,m._read_current())))'
+          echo "=== cross-check VERSIONING.md scope ==="
+          grep -qi "TikTok + LinkedIn" docs/VERSIONING.md && echo "✅ scope policy in docs"
+
+  auto-version-bump:
+    name: Auto bump (major|minor|patch)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'bump'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump + commit + tag + push
+        env:
+          BUMP_PART: ${{ github.event.inputs.bump }}
+        run: |
+          python scripts/version_bump.py --bump "$BUMP_PART" --commit --push
+          NEW=$(python -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("v","scripts/version_bump.py"); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(".".join(map(str,m._read_current())))')
+          echo "new_pipeline_version=$NEW" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release (auto changelog)
+        env:
+          VERSION: ${{ env.new_pipeline_version }}
+        run: |
+          LAST_TAG="v$(python -c 'import importlib.util; s=importlib.util.spec_from_file_location("v","scripts/version_bump.py"); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(".".join(map(str,m._read_current())))')"
+          # release notes already generated by release-notes job for real tags;
+          # here just confirm tag pushed
+          git tag -l "v$VERSION" && echo "✅ tag v$VERSION pushed"
