@@ -8,11 +8,13 @@ __pycache__/
 *.pyd
 
 # Distribution / packaging
-*.egg-info/
 dist/
 build/
+*.egg
+*.egg-info/
 
 # Logs
+logs/
 *.log
 pipeline_*.log
 
@@ -25,6 +27,10 @@ pipeline_*.log
 state/
 *.state
 *.pkl
+
+# Runtime browser + credential state (9Router, LinkedIn session)
+.tiktok-linkedin/
+*.tokens.json
 
 # Scraped corpus (privacy + volume)
 data/
@@ -42,6 +48,7 @@ Thumbs.db
 
 # Test coverage
 .coverage
+.coverage.*
 htmlcov/
 .pytest_cache/
 
@@ -49,6 +56,3 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
-
-# ── Runtime log samples ──
-pipeline_*.log

@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""
+TikTok Provider Adapter — Camoufox-based comment collector.
+
+Merancang ulang collector.py menjadi adapter yang konsumenkan
+antarmuka ProviderAdapter. Pipeline hanya perlu memanggil collect()
+dan menerima Observation list — tidak peduli apakah source-nya
+TikTok, LinkedIn, YouTube, atau Reddit.
+"""
+from __future__ import annotations
+
+import asyncio
+import re
+import time
+from typing import List, Dict, Optional
+
+from src.providers.base import ProviderAdapter
+from src.schema.canonical import Observation
+from src.schema.mapper import tiktok_to_canonical
+from src.tiktok_schema import RawComment, write_jsonl
+
+try:
+    from camoufox.async_api import AsyncCamoufox
+except Exception:
+    AsyncCamoufox = None
+
+try:
+    from src.browser_selector import BrowserSession
+except Exception:
+    BrowserSession = None
+
+
+class TikTokAdapter(ProviderAdapter):
+    """
+    Adapter untuk TikTok — membungkus Camoufox collector
+    dan mengonversi hasil ke Observation list.
+    """
+
+    @property
+    def provider_name(self) -> str:
+        return "tiktok"
+
+    async def collect(self, url: str, **kwargs) -> List[Observation]:
+        """
+        Kumpulkan komentar TikTok.
+
+        Args:
+            url: URL video TikTok
+            max: maksimal komentar (default 100)
+            scrolls: jumlah scroll (default 10)
+            resume: job_id untuk melanjutkan
+            capture_method: 'cdp' | 'dom' | 'auto'
+
+        Returns:
+            List[Observation] dalam schema kanonikal
+        """
+        max_comments = kwargs.get("max", 100)
+        scrolls = kwargs.get("scrolls", 10)
+        resume_job = kwargs.get("resume")
+        capture_method = kwargs.get("capture_method", "auto")
+
+        raw_comments = await self._collect_comments(
+            url, max=max_comments, scrolls=scrolls,
+            resume=resume_job, capture_method=capture_method
+        )
+
+        # Convert ke canonical schema
+        observations = [tiktok_to_canonical(r) for r in raw_comments]
+        return observations
+
+    def probe(self, url: str) -> Dict:
+        """Cek apakah URL TikTok dapat diakses."""
+        return {
+            "url": url,
+            "provider": self.provider_name,
+            "accessible": None,
+            "metadata": {}
+        }
+
+    # ── Internal collector methods ──────────────────────────────────────────────
+
+    async def _collect_comments(self, url: str, **kwargs) -> List[RawComment]:
+        """
+        Core collector — Camoufox + DOM/CDP.
+        Mengembalikan list RawComment untuk dikonversi di layer mapper.
+        """
+        # Import sini untuk menghindari circular import
+        from src.collector import collect_comments
+        return await collect_comments(url, **kwargs)

@@ -1,4 +1,4 @@
-# IMPLEMENTATION — chatgpt-response (16-point review) → tiktok-pipeline
+# IMPLEMENTATION — chatgpt-response (16-point review) → social-data-engine
 
 Ditulis 2026-08-16 setelah live test video @enxayeti/7669640839861112071.
 Setiap poin review (`chatgpt-response`, file review 12KB) dipetakan ke modul + status + bukti observable.
@@ -60,3 +60,7 @@ curated  : @viergod 'let’s connect guyss | Kadaffi'
 - LLM annotation/identity (#13) — butuh 9Router; `extract_identities` siap
 - Thread/conversation-unit builder (#5) — RAG nanti
 - Orama/Mark integration (#15) — curated siap di-embed
+
+Lihat juga:
+- `chatgpt-response.md` — design brief (visi Social Data Engine)
+- `VERIFICATION.md` — cross-check kode vs klaim 16-poin (build/test matrix)

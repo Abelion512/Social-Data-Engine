@@ -1,5 +1,10 @@
 # Social Data Engine — Project Direction
 
+> Design brief (12 KB review file) that recast social-data-engine from a single-provider
+> scraper into a multi-provider digital behavioral data platform.
+> See `IMPLEMENTATION.md` for the 16-point mapping → module + status + evidence,
+> and `VERIFICATION.md` for the live code cross-check.
+
 ## Identity
 
 * **Repo title:** `Social Data Engine`
