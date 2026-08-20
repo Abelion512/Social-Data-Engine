@@ -613,6 +613,8 @@ async def collect_video(
         if not await session.connect(force_camoufox=force_camoufox):
             return {"error": "browser_connect_failed"}
         page = session.page
+        if page is None:
+            return {"error": "browser_connect_failed_no_page"}
         mode = "CDP" if session.is_cdp else "Camoufox"
         print(f"[collector] Browser mode: {mode}")
 

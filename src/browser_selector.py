@@ -277,7 +277,20 @@ class BrowserSession:
         Priority: user browser (CDP) → Camoufox fallback.
         """
         if force_camoufox:
-            self.browser, self._cm, self.page = await _open_camoufox()
+            # Wrap launch in try/except: if the firefox binary isn't cached
+            # (headless server) or AsyncCamoufox fails, we must NOT crash the
+            # caller — return False so `if not await session.connect(...)` can
+            # short-circuit cleanly. (Found via live-test: the old unconditional
+            # `return True` let an uncaught TypeError propagate into login_only
+            # and collect_video.)
+            try:
+                self.browser, self._cm, self.page = await _open_camoufox()
+            except Exception as e:
+                print(f"[browser] ❌ Camoufox launch gagal: {e}")
+                return False
+            if self.page is None:
+                print("[browser] ❌ Camoufox gagal — tidak ada halaman browser")
+                return False
             self.is_camoufox = True
             return True
 

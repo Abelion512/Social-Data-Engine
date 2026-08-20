@@ -96,9 +96,15 @@ def main() -> int:
     _git("tag", f"v{new_ver}")
     print(f"  tagged  : v{new_ver}")
     if args.push:
-        _git("push")
+        # Safety: NEVER push all local branches (could push stray local work to
+        # main!). Push ONLY the currently checked-out branch + the new tag.
+        branch = subprocess.check_output(
+            ["git", "-C", str(ROOT), "rev-parse", "--abbrev-ref", "HEAD"],
+            text=True,
+        ).strip()
+        _git("push", "origin", branch)
         _git("push", "origin", f"v{new_ver}")
-        print(f"  pushed  : commit + tag v{new_ver}")
+        print(f"  pushed  : {branch} + tag v{new_ver}")
     print(f"✅ version bumped {major}.{minor}.{patch} → {new_ver}")
     return 0
 
