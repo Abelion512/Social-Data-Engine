@@ -51,18 +51,46 @@ Live test = **actual collection dari TikTok** lewat Camoufox + cookie session.
 > **Prasyarat:** cookie login sudah dipersisten di `~/.tiktok-linkedin/chrome-profile/`
 > (profile persisten). Jika belum, jalankan **login manual dulu**.
 
-### Step 1 — Login (sekali, persisten)
+### Step 1 — Sambungkan browser (human-in-the-loop, safety first)
+
+> **Safety for human:** agent **tidak pernah** mengambil alih login manual
+> atau captcha. Kaman selalu terlihat / kamu klik **Allow**.
+
+Pilih satu (workflow normal kamu):
+
+**A. Claude Code (desktop) — CDP connect ke Chrome/Brave yang tengah jalan**
+`browser_selector.py` detect otomatis instance Chrome/Brave dengan
+`--remote-debugging-port`; Claude Code buka URL, muncul dialog **“Allow”** →
+kamu klik. Session persisten via profile yang sama.
+
 ```bash
 source .venv/bin/activate
-bash run.sh                  # tanpa URL → mode —login (browser terbuka, login manual)
+bash run.sh "<photo/video URL>" --max 50 --scrolls 40   # → browserSelector CDP
 ```
-Buka browser, login ke `tiktok.com/login` secara manual → tutup browser.
+
+**B. Camoufox *visible* (anti-detect Firefox, terlihat jelas)**
+Jika CDP tak connectable, launcher pakai Camoufox `headless=False` — Firefox
+terbuka **terlihat** (bukan tersembunyi) supaya kamu bisa monitoring / login
+manual kalau perlu.
+
+```bash
+bash run.sh "<URL>"                # mode —login → browser terbuka, login manual
+```
+
 Session persisten di `~/.tiktok-linkedin/chrome-profile/`.
+
+> ⚠️ Di *headless server* (tanpa display + Firefox binary belum ter-cache),
+> live collection **terbatas** — pakailah desktop Claude Code / Chrome CDP
+> sebagaimana biasa. (Live-test di server hanya sampai browser-boot; semua
+> crash kode sudah diperbaiki dan diverified di `VERIFICATION.md §7`.)
 
 ### Step 2 — Live collect dua URL (photo + video)
 ```bash
-bash run.sh "https://www.tiktok.com/@coretanmalam2000/photo/7673343206544706837"
-bash run.sh "https://www.tiktok.com/@enxayeti/video/7669640839861112071"
+# setelah Step 1 (allow/login) selesai:
+bash run.sh "https://www.tiktok.com/@coretanmalam2000/photo/7673343206544706837" --max 50 --scrolls 40
+bash run.sh "https://www.tiktok.com/@enxayeti/video/7669640839861112071"      --max 50 --scrolls 40
+# atau langsung (Claude Code desktop, -u agar output real-time):
+python -u src/tiktok_linkedin.py "<URL>" --max 50 --scrolls 40
 ```
 
 ### Step 3 — Verify stabilize criteria (MVP v1)
