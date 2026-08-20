@@ -227,3 +227,17 @@ di `ci.yml` merekam change-set size (LOC) + meng-log ke dokumen.
 **Repo: `social-data-engine`** — rename selesai, git track consistency verified
 (`git rev-parse --show-toplevel` → `…/social-data-engine`).
 
+## 7. Live-Test Gate (agents.md — mandatory before merge)
+
+Peraturan agent **‘always live-test before merge’** tertuang di `agents.md` (project root).
+Live test = actual collection dari TikTok via Camoufox + cookie session — unit test mock
+tidak cukup.
+
+- login: `bash run.sh` (manual browser, persist di `~/.tiktok-linkedin/chrome-profile/`)
+- collect: `bash run.sh "<tiktok photo|video URL>"`
+- verify: coverage ≥ 95 %, hierarchical replies, photo/sticker media, normalize,
+  quality gate ≥ 0.35 (lihat `docs/VERSIONING.md §Kriteria stabil`)
+- self-healing: jika partial → `SelfHealingPipeline.run()` auto-retry ≤ max_iter
+
+> Unit + CI hijau **tidak otomatis** berarti stabil di live; ini adalah
+gerbang final sebelum merge ke `main`.
