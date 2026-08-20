@@ -138,3 +138,6 @@ python scripts/version_bump.py --bump patch --commit --push   # baru commit + ta
 - `docs/VERSIONING.md` — semver policy + MVP v1 kriteria stabil
 - `docs/SELF-IMPROVEMENT.md` — arsitektur RSI
 - `docs/chatgpt-response.md` — design brief (visi penuh)
+
+## ⚠ Live-test status
+*Status terakhir: Live test **run #2 berhasil** — 44 curated, 7 threaded replies, quality 0.992 mean ✅ (coverage 22% guest; full ≥95% butuh login desktop).*

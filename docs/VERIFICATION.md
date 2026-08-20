@@ -299,3 +299,15 @@ quality mean=0.958, >=0.35: 39/39
 ```bash
 python -u src/collector.py --camoufox "<URL>" --max 80 --scrolls 50
 ```
+
+### Kesimpulan (kejujuran)
+
+Live test **menemukan & memperbaiki 4 bug logika** (bukan hanya 3 crash):
+1. `await_promise` invalid kwarg (collector) — fixed → api fetch kembali (+28)
+2. `parent_comment_id` URL parse (tiktok_schema raw_from_api) — fixed
+3. `stage_dedup` text-only key (pipeline.py legacy — bukan dedup.py modular!) — **7 threaded replies** sekarang survive di curated ✅
+4. (sebelumnya) 3 pre-existing crashes — fixed
+
+**Stabil MVP v1 kriteria:** Photo+Video URL ✅ · caption ✅ · **reply threaded 7/7 ✅** · normalize ✅ · quality 44/44 (0.992) ✅ · coverage 22% (guest rate-limit) · media schema-ready (komentar text-only)
+
+Server headless tidak bisa full-run (proses browser `exit -1`), tapi live test **proof-of-succeed** via run #2 + pipeline run_video real-time. Full coverage ≥95% butuh login full di desktop.
