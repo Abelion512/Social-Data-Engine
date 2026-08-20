@@ -141,3 +141,27 @@ python scripts/version_bump.py --bump patch --commit --push   # baru commit + ta
 
 ## ⚠ Live-test status
 *Status terakhir: Live test **run #2 berhasil** — 44 curated, 7 threaded replies, quality 0.992 mean ✅ (coverage 22% guest; full ≥95% butuh login desktop).*
+
+
+## ⚠ Live-test status (agent-tool-first, run #4)
+
+- **Prinsip:** agent automation, bukan API batch. Registry rute URL→provider;
+  `BrowserAgent` pilih `browser_read/click/scroll/expand_replies/route.capture/api_fetch/media_enrich`
+  tools (manus.im extension style). Semua platform (TikTok/LinkedIn) → canonical
+  `Observation` (saling komunikasi lewat satu schema).
+- Local headless server **tidak bisa camoufox live** (CDP/display tertutup; proses `exit -1` >3min).
+  Bukti sampai tuntas lewat:
+  (a) `scripts/trace_comment.py --trace-all` → **✅ ALL 44 curated traced** (raw.id==curated.id,
+      parent survives dedup, quality≥0.35, exit 0);
+  (b) `BrowserAgent` dry-run goal→observe→plan→act trace, no browser → no crash ✅.
+- Full action-level trace butuh **desktop**: `python -u src/tiktok_linkedin.py <URL>`
+  (camoufox **visible** by default; atau Claude Code CDP *Allow*). Human-in-loop mandatory.
+- Env-gated headless fallback (`CAMOUFOX_HEADLESS=true .venv/bin/python src/collector.py --camoufox URL`)
+  tetap berlaku untuk run-run pendek (scrolls ≤ 50).
+
+### Pluggable providers
+| provider | module | goal default |
+|---|---|---|
+| tiktok | src/providers/tiktok.py | collect_threaded_replies |
+| linkedin | src/providers/linkedin.py | collect_all_comments (scrape hook pluggable) |
+Tambah platform: subclass `AgentProvider`, override `toolkit()` (selectors) + `_scrape_comments`, register URL regex.
