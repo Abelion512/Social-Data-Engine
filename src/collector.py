@@ -301,6 +301,11 @@ async def _setup_route_intercept(page, captured_pages: list, counters: dict):
 
         counters["comment_like"] += 1
         is_reply = "/reply/" in url or "comment/list/reply" in url
+        # TikTok reply objects do NOT embed their parent — the parent cid is
+        # the `comment_id=` query param of the /comment/list/reply request URL.
+        # Parse it here so threaded replies can be reconstructed downstream.
+        m = re.search(r"[?&]comment_id=([0-9A-Za-z]+)", url)
+        parent_id = m.group(1) if m else ""
 
         try:
             response = await route.fetch()
@@ -326,6 +331,7 @@ async def _setup_route_intercept(page, captured_pages: list, counters: dict):
             "has_more": data.get("has_more", 0),
             "cursor": data.get("cursor", 0),
             "is_reply": is_reply,
+            "parent_comment_id": parent_id,
         }
         captured_pages.append(page_data)
         label = "reply" if is_reply else "comment"
@@ -390,7 +396,10 @@ async def fetch_comments_api(page, video_id: str, cursor: int = 0) -> dict:
         }}
     }}"""
     try:
-        out = await page.evaluate(js, await_promise=True)
+        # Playwright's page.evaluate auto-awaits async expressions;
+        # `await_promise=` is NOT a valid kwarg — live test surfaced it as:
+        # "Page.evaluate() got an unexpected keyword argument 'await_promise'".
+        out = await page.evaluate(js)
     except Exception as e:
         return {"error": f"evaluate: {e}"}
     if isinstance(out, list):
@@ -453,7 +462,8 @@ async def _capture_pass(page, video_ctx, captured_pages, all_raw,
                         seen_ids.add(cid)
                         continue
                     seen_ids.add(cid)
-                r = raw_from_api(api_comment, video_ctx, method="route")
+                r = raw_from_api(api_comment, video_ctx, method="route",
+                                     parent_comment_id=pg.get("parent_comment_id", ""))
                 all_raw.append(r)
                 cdp_added += 1
 
@@ -694,7 +704,8 @@ async def collect_video(
                     continue
                 if cid:
                     seen_ids.add(cid)
-                r = raw_from_api(api_comment, video_ctx, method="route")
+                r = raw_from_api(api_comment, video_ctx, method="route",
+                                     parent_comment_id=pg.get("parent_comment_id", ""))
                 all_raw.append(r)
 
         final_written = write_jsonl(str(out_path), [r.to_dict() for r in all_raw])

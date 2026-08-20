@@ -68,14 +68,26 @@ class RawComment:
         return d
 
 
-def raw_from_api(c: dict, video_ctx: dict, method: str = "cdp") -> RawComment:
-    """Convert TikTok API comment item → RawComment."""
+def raw_from_api(c: dict, video_ctx: dict, method: str = "cdp", parent_comment_id: str = "") -> RawComment:
+    """Convert TikTok API comment item → RawComment.
+
+    `parent_comment_id` is injected explicitly for reply pages: TikTok sends
+    reply requests to ``/comment/list/reply/?comment_id=<PARENT_CID>`` and the
+    response objects do NOT carry their parent id, so collector._on_route parses
+    the parent cid from the request URL and injects it here.
+    """
     user = c.get("user", {}) or {}
     return RawComment(
         video_id=video_ctx.get("video_id", ""),
         video_url=video_ctx.get("video_url", ""),
         comment_id=c.get("cid", ""),
-        parent_comment_id=c.get("parent_comment_id", "") or "",
+        parent_comment_id=(
+            parent_comment_id
+            or c.get("parent_comment_id")
+            or c.get("reply_comment_id")
+            or c.get("parent_cid")
+            or ""
+        ),
         author=Author(
             author_id=user.get("id", ""),
             author_handle=user.get("unique_id", c.get("username", "")),

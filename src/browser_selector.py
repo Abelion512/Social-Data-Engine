@@ -15,6 +15,7 @@ Kenapa CDP sering gagal?
   - Firewall/permission blocking localhost connection
 """
 from __future__ import annotations
+import os
 import asyncio
 import json
 import sys
@@ -251,8 +252,16 @@ async def _open_camoufox():
     # `user_data_dir` on launch_persistent_context (not plain launch).
     # Discovered via live test (TypeError: BrowserType.launch() got an
     # unexpected keyword argument 'user_data_dir').
+    # headless: default False (visible — keeps human-in-the-loop safety on
+    # desktop). Set CAMOUFOX_HEADLESS=true to run headless (e.g. on a headless
+    # server / CI / xvfb-free). Discovered via live-test: headless=False with
+    # no display left the run parked at browser-warmup; headless=True boots &
+    # reaches TikTok on a headless server.
+    headless = os.environ.get("CAMOUFOX_HEADLESS", "false").lower() not in (
+        "0", "false", "no", ""
+    )
     browser_cm = AsyncCamoufox(
-        headless=False,
+        headless=headless,
         user_data_dir=str(PROFILE_DIR),
         persistent_context=True,
     )
