@@ -1,31 +1,32 @@
 #!/usr/bin/env python3
 """
-Pluggable multi-provider harness (deepseek-harness style).
+Pluggable browser-agent harness (manus.im extension style).
 
-Provider discovery = URL-dispatch to adapter. All providers share canonical
-`Observation` so platforms communicate through one schema (TikTok replies,
-LinkedIn posts, YouTube, Reddit ...) instead of bespoke pipes.
-
-Usage
-  import asyncio
-  from src.harness import harness
-  obs = asyncio.run(harness.collect("https://www.tiktok.com/@x/video/123"))
-  print(harness.resolve("https://www.linkedin.com/posts/...."))  # "linkedin"
-  print(harness.probe(url))
+NOT API-batch. Each URL routes to a provider whose `toolkit()` offers pilihable
+`browser_read`/`browser_click`/`scroll`/`expand_replies`/`route.capture`/`api_fetch`
+tools. `BrowserAgent` runs goal-driven observe→plan→act + emits a **transparent
+trace** (evidence sampai tuntas).
 """
 from __future__ import annotations
 
-__all__ = ["harness", "Harness", "ProviderAdapter", "register", "resolve", "collect"]
+__all__ = [
+    "harness", "Harness", "BrowserAgent", "AgentTool",
+    "register", "resolve", "probe", "agent", "tools", "collect",
+]
 
 from src.harness.registry import Harness, harness
 from src.providers.base import ProviderAdapter
+from src.harness.agent import BrowserAgent
+from src.harness.tools import AgentTool
 
-# Re-export for callers
+# module-level aliases backed by the global harness instance
 register = harness.register
 resolve = harness.resolve
 probe = harness.probe
+agent = harness.agent
+collect = harness.collect
 
 
-def collect(url: str, **kwargs):
-    """Resolve URL → provider → collect (async)."""
-    return harness.collect(url, **kwargs)
+def tools(url: str):
+    """Provider-specific tool catalog for `url` (introspection)."""
+    return harness.tools(url)

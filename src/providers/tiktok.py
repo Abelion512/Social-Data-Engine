@@ -14,7 +14,7 @@ import re
 import time
 from typing import List, Dict, Optional
 
-from src.providers.base import ProviderAdapter
+from src.providers.base import ProviderAdapter, AgentProvider
 from src.harness.registry import harness
 from src.schema.canonical import Observation
 from src.schema.mapper import tiktok_to_canonical
@@ -31,15 +31,29 @@ except Exception:
     BrowserSession = None
 
 
-class TikTokAdapter(ProviderAdapter):
+class TikTokAdapter(AgentProvider):
     """
-    Adapter untuk TikTok — membungkus Camoufox collector
-    dan mengonversi hasil ke Observation list.
+    Adapter TikTok — goal-driven browser agent (manus.im extension style).
+
+    `collect()` API-batch tetap ada (backward-compat, delegasi ke agent).
+    Agent memilih browser.* tools via `toolkit()` — platform spesifik.
     """
+
+    default_goal = "collect_threaded_replies"
 
     @property
     def provider_name(self) -> str:
         return "tiktok"
+
+    def toolkit(self):
+        """TikTok-specific tool bindings + reply-thread strategy."""
+        from src.harness.tools import default_toolkit, RouteCapture
+        kt = default_toolkit()
+        # TikTok: replies under [data-e2e="comment"] threads; route captures
+        # /comment/list/reply — parent_comment_id parsed di collector._on_route.
+        # Stateful container (fresh per toolkit) → thread-aware capture.
+        kt["route.capture"] = RouteCapture(captured_pages=[], counters={"route": 0, "api": 0, "dom": 0})
+        return kt
 
     async def collect(self, url: str, **kwargs) -> List[Observation]:
         """

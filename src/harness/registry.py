@@ -66,6 +66,22 @@ class Harness:
         name = self.resolve(url)
         return self.get(name).collect(url, **kwargs)
 
+    def agent(self, url: str, goal: str = None, headless: bool = False):
+        """Goal-driven BrowserAgent dispatch by URL (manus.im extension style).
+
+        Returns a coroutine: ``summary = await harness.agent(url, goal="...")``.
+        Each provider picks `browser_*` tools via its ``toolkit()`` — goal-driven,
+        observable trace, human-like actions (NOT API batch).
+        """
+        name = self.resolve(url)
+        provider = self.get(name)
+        goal = goal or getattr(provider, "default_goal", "collect_all_comments")
+        return provider.run_agent(url, goal=goal, headless=headless)
+
+    def tools(self, url: str) -> Dict:
+        """Return the provider-specific tool catalog for `url` (introspection)."""
+        return self.get(self.resolve(url)).toolkit()
+
 
 # ── global singleton ────────────────────────────────────────────────────────
 harness = Harness()

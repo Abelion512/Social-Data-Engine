@@ -20,7 +20,7 @@ import re
 from typing import List, Dict, Optional
 
 from src.harness.registry import harness
-from src.providers.base import ProviderAdapter
+from src.providers.base import AgentProvider
 from src.schema.canonical import Observation, Content, Provenance
 from src.tiktok_schema import COLLECTOR_VERSION
 
@@ -37,8 +37,22 @@ _COMMENT_ID_RE = re.compile(r"commentId=([0-9A-Za-z-]+)")
 _POST_ID_RE = re.compile(r"/posts/[^/?#]+(?:#.*)?$")
 
 
-class LinkedInAdapter(ProviderAdapter):
-    """Adapter LinkedIn → canonical Observation."""
+class LinkedInAdapter(AgentProvider):
+    """Adapter LinkedIn → canonical Observation (browser-agent style).
+
+    `probe()`/URL-parse work; `collect()` delegates ke agent.run_agent. The
+    `_scrape_comments` hook is the pluggable scraper (camoufox/selenium/API) —
+    override per deployment. Returns [] (no crash) until a scraper is plugged.
+
+    Register on import (lazy side-effect) → routable.
+    """
+
+    default_goal = "collect_all_comments"
+
+    def toolkit(self):
+        """LinkedIn-specific tool bindings (override selectors when scraper ready)."""
+        from src.harness.tools import default_toolkit
+        return default_toolkit()
 
     @property
     def provider_name(self) -> str:
