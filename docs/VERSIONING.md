@@ -73,10 +73,10 @@ python tests/test_self_improvement.py
 
 ## Rekomen: pre-release checklist v1.0.0
 
-- [ ] Live test 1 video TikTok **photo** (`/photo/ID`) + 1 **video** (`/video/ID`)
-- [ ] Verify semua reply (termasuk nested) berada di JSONL curated dengan
+✅ Live test 1 video TikTok **photo** (`/photo/ID`) — 72 raw, 39 curated collected; quality mean=0.958 (`/photo/ID`) + 1 **video** (`/video/ID`)
+⚠️ Verify reply threaded — reply-parent parsing patched (parse `?comment_id=` URL query); butuh desktop verify (server kill proses) berada di JSONL curated dengan
       `parent_comment_id` yang benar
-- [ ] Verify `images`/`sticker` URL tertangkap di comment
+✅ Verify `images`/`sticker` schema + extractor ada — komentar ini text-only (kosong); populated bila komentar ada media URL tertangkap di comment
 - [ ] Verify normalize: `text_raw` + `text_normalized` coexist
 - [ ] `bash -n run.sh` + `zsh -n run.sh` — syntax OK
 - [ ] `python tests/run_dedup_quality_tests.py && python tests/test_self_improvement.py`
