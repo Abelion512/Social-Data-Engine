@@ -267,13 +267,35 @@ python -u src/tiktok_linkedin.py \
   "https://www.tiktok.com/@coretanmalam2000/photo/7673343206544706837" --max 50 --scrolls 40
 ```
 
-### Status akhir (kejujuran, sesuai ponytail "lazy not negligent")
+### Status akhir (live-test run #2 — headless server, real-time trace)
 
-- **Code path:** ketiga live-test crash **diperbaiki & diverified** (compile +
-  import + 8/8 dedup-quality + 11/11 self-improvement hijau).
-- **Data collection:** *env-gated* (bukan kode) — semua crash sudah dilangkahi,
-  proses sampai browser-boot.
-- **Policy `agents.md`:** live-test-before-merge **terbukti berhasil** menemukan
-  bug yang unit test tak tangkap. Komitmen penuh dilanjutkan setelah environment
-  siap atau cookie valid disediakan.
+**Evidence (peroleh langsung via foreground real-time trace `/tmp/livetrace2.log`):**
 
+```
+[collector] Video ID: 7673343206544706837
+[browser] Camoufox (headless)
+Playwright route intercept registered
+[route] comment page: +20
+[route] reply page: +1/+3/+1...
+[COLLECT] iteration=1: dom=+19 route=+19 api=+28 total=66
+Done. 72 raw -> data/raw/.../7673343206544706837.jsonl
+72 raw -> 63 normalized -> 39 curated (dedup 24)
+quality mean=0.958, >=0.35: 39/39
+```
+
+| MVP v1 kriteria | Status | Evidence |
+|---|---|---|
+| Photo + Video URL | PASS | regex /video|photo/ + live photo collected |
+| Isi + caption | PASS | video_context.caption key present (value empty = TikTok SSR tak supply) |
+| Reply bertingkat | WARN patched | parent_comment_id parsed from `?comment_id=` URL query; reply pages intercepted `[route] reply page:+1`; full verify env-gated (server kills long browser runs, exit -1) |
+| Photo/sticker media | WARN schema-ready | RawComment.images + DOM img/bg/video[poster] extract ada; kosong karena komentar ini text-only (content-dependent) |
+| Normalize | PASS | pipeline.run_video -> normalized JSONL |
+| Coverage >= 95% | FAIL (36.4%) | guest session rate-limit (reported=198, cap=72) |
+| Quality >= 0.35 | PASS | mean=0.958, 39/39 pass |
+| Self-improvement tests | PASS | 11/11 |
+| Dedup+quality tests | PASS | 8/8 |
+
+**Kesimpulan (kejujuran):** Live test **temukan 2 bug logika** (await_promise kwarg — fixed; reply parent-query parsing — patched). Compile + regression hijau. *Full end-to-end* (parent_id populate di curated, coverage>=95%) butuh desktop — server headless konsistently kill proses browser panjang. Di desktop:
+```bash
+python -u src/collector.py --camoufox "<URL>" --max 80 --scrolls 50
+```
