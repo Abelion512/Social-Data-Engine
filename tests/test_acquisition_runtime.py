@@ -378,6 +378,7 @@ def test_resume_completed_checkpoint_reports_persisted_items_seen():
 
         calls_before = len(actor.calls)
         dataset_before = read_lines(ctx.dataset_path)
+        ckpt_bytes_before = Path(ctx.checkpoint_path).read_text(encoding="utf-8")
 
         # Resume the ALREADY-COMPLETED job.
         s2 = run(AcquisitionRuntime().run(actor, ctx, RunOptions(resume=True)))
@@ -389,6 +390,8 @@ def test_resume_completed_checkpoint_reports_persisted_items_seen():
         dataset_after = read_lines(ctx.dataset_path)
         assert dataset_after == dataset_before
         assert len(dataset_after) == 100
+        # Checkpoint must not be modified either (no re-commit on this path)
+        assert Path(ctx.checkpoint_path).read_text(encoding="utf-8") == ckpt_bytes_before
         # Termination reason preserved from the checkpoint
         assert s2.termination_reason == s1.termination_reason == "has_more_false"
         assert s2.outcome == Outcome.SUCCESS

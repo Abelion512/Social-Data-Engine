@@ -137,3 +137,17 @@ python -m py_compile (all runtime/tiktok/collector/test files)  OK
 - **Legacy reason strings** (`max_comments_reached`, `has_more_false`, …) are
   kept byte-compatible instead of renamed; `Outcome` provides the clean taxonomy.
 - **No second real platform** — only fake/TikTok-shaped actors in tests, per scope.
+- **Fresh-run dataset assumption (KNOWN LIMITATION):** a run started WITHOUT
+  `resume=True` assumes its `dataset_path` is new/empty. Re-invoking a job on a
+  pre-existing dataset path without resume appends duplicate records — the
+  engine only replays disk ids on the resume path. Always use a fresh
+  `dataset_path`, or `resume=True`, when records already exist.
+- **Checkpoint durability is rename-atomic, not fsync-durable:**
+  `CheckpointStore.save` writes a temp file then replaces the target, but does
+  not fsync file or directory. On power loss the checkpoint may be lost/corrupt;
+  `load()` then returns None and the next run starts fresh. Also: no lock —
+  concurrent invocations against one job_id are unsupported (single-writer).
+- **Error classification is substring-based (inherited verbatim from TikTok):**
+  an error string merely *containing* "block"/"verify"/"captcha"/"security" is
+  classified terminal `auth_blocked` instead of retryable fetch failure.
+  Providers should pass precise `error_type` values to avoid false positives.
