@@ -96,7 +96,10 @@ class LinkedInAdapter(AgentProvider):
     async def _scrape_comments(self, url: str, post_id: str, **kwargs) -> List[Dict]:
         """Pluggable hook. Default: no LinkedIn credentials → empty."""
         env = linkedin_env() if linkedin_env else {}
-        if not env.get("LINKEDIN_USERNAME"):
+        # LINKEDIN_USERNAME below is an env-var NAME reference (runtime-resolved),
+        # NOT a credential value — allowlist to suppress false-positive secret scan.
+        # pragma: allowlist secret
+        if not env.get("LINKEDIN_USERNAME"):  # gitleaks:allow
             return []
         # TODO: camoufox/selenium LinkedIn comment scraper here.
         return []
