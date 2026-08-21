@@ -1,0 +1,22 @@
+# Gitleaks / secret scanner allowlist for social-data-engine.
+#
+# Kami TIDAK menyimpan credential values di repo. Satu-satunya kemunculan
+# `LINKEDIN_USERNAME`/`LINKEDIN_PASSWORD` adalah sebagai *env-var NAME reference*
+# (runtime-resolved via os.environ / linkedin_env()), bukan nilai rahasia.
+#
+# Aturan ini memberi tahu scanner:
+#   1. jangan scan compiled cache (__pycache__/*.pyc) — binary leak keyword
+#   2. lewati regex env-var-name reference di linkedin.py (bukan credential value)
+title = "social-data-engine Gitleaks allowlist"
+
+[allowlist]
+description = "LinkedIn env-var-name references (runtime keys, not secret values) + compiled cache."
+# regex: hanya cocok dengan literal *nama* env-key, bukan nilai credential.
+[[allowlist.regex]]
+description = "LinkedIn auth env-var NAME references (runtime-resolved, never a secret value)"
+regex = 'LINKEDIN_(USERNAME|PASSWORD)'
+
+[allowlist.paths]
+# Exclude compiled bytecode (binary, tidak punya pragma komentar).
+"__pycache__/" = "LinkedIn env-var ref only"
+".*\\.pyc$" = "compiled bytecode cache, not source"
