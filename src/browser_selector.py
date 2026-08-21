@@ -31,7 +31,10 @@ try:
 except ImportError:
     async_playwright = None  # type: ignore
 
-from camoufox.async_api import AsyncCamoufox
+try:
+    from camoufox.async_api import AsyncCamoufox
+except ImportError:
+    AsyncCamoufox = None  # type: ignore
 
 PROFILE_DIR = Path.home() / ".tiktok-linkedin" / "chrome-profile"
 
@@ -246,6 +249,10 @@ async def _open_camoufox():
     try:
         for f in PROFILE_DIR.glob("Singleton*"):
             f.unlink()
+        for lock_name in (".parentlock", "lock", "parent.lock"):
+            lp = PROFILE_DIR / lock_name
+            if lp.exists() or lp.is_symlink():
+                lp.unlink()
     except Exception:
         pass
 
