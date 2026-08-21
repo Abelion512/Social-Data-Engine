@@ -16,6 +16,7 @@ Kenapa CDP sering gagal?
 """
 from __future__ import annotations
 import os
+import time
 import asyncio
 import json
 import sys
@@ -407,11 +408,27 @@ class BrowserSession:
         user_browsers = [s for s in scan if not s["logged_in"] and _cdp_browser_type(s["browser"])]
 
         if logged_in:
-            print(f"[browser] ✅ {len(logged_in)} browser sudah login TikTok.")
+            print(f"[browser] ✅ {len(logged_in)} browser terdeteksi login (validasi cookie).")
             chosen = _choose_browser_entry(logged_in)
             if chosen is not None:
                 browser, ctx, page = await _connect_cdp(chosen["browser"])
                 if browser:
+                    # Defense against false-positive: `_read_tiktok_session` cek HANYA
+                    # sessionid valid. Jika context user sebenarnya TIDAK punya
+                    # sessionid (cookie file valid tapi belum pernah di-inject ke
+                    # browser), import cookie file ke context — TANPA perlu login
+                    # manual ulang. `add_cookies` idempotent (overwrite).
+                    if not await _ctx_has_sessionid(ctx):
+                        cf = _resolve_cookie_file()
+                        if cf:
+                            cks = _load_cookies(cf)
+                            if cks:
+                                try:
+                                    await ctx.add_cookies(cks)
+                                    print(f"[browser] ✅ {len(cks)} cookie di-inject ke context "
+                                          f"port {chosen['browser'].port}.")
+                                except Exception as e:
+                                    print(f"[browser] ⚠️ add_cookies gagal: {str(e)[:70]}")
                     self.browser = browser
                     self.page = page
                     self.is_cdp = True
@@ -493,6 +510,20 @@ def _cdp_browser_type(detected: "DetectedBrowser") -> str:
     return ""
 
 
+async def _ctx_has_sessionid(ctx: "BrowserContext") -> bool:
+    """Cek cepat apakah context browser user sudah punya sessionid valid (tanpa re-attach)."""
+    try:
+        cks = await ctx.cookies()
+    except Exception:
+        return False
+    now = time.time()
+    for c in cks:
+        if (c.get("name") or "").lower() == "sessionid":
+            exp = c.get("expires")
+            return exp is None or exp > now
+    return False
+
+
 async def _read_tiktok_session(detected: "DetectedBrowser", timeout: float = 10.0) -> bool:
     """Attach ke user browser via CDP, baca cookie context UNTUK login TikTok.
 
@@ -525,17 +556,22 @@ async def _read_tiktok_session(detected: "DetectedBrowser", timeout: float = 10.
             cookies = []
         for c in cookies:
             name = (c.get("name") or "").lower()
-            if any(s in name for s in ("sessionid", "ttwid", "uid", "sid")):
+            exp = c.get("expires")
+            # HANYA 'sessionid' (primary login TikTok). 'ttwid'/'uid_tt'/'sid_tt' itu
+            # tracking cookie — SELALU ADA walau session expired → kalau kita cek
+            # itu juga, kita dapat FALSE 'logged-in' → connect CDP tanpa inject cookie →
+            # challenge/blank page & 0 komentar. Cek juga expiry agar expired tidak dihitung.
+            if name == "sessionid" and (exp is None or exp > time.time()):
                 return True
         return False
     except Exception as e:
         print(f"[browser] CDP login-check gagal {detected.title}: {str(e)[:80]}")
         return False
     finally:
-        # Detach (jangan close!) supaya browser user tetap hidup.
+        # Detach (bukan terminate!) — browser user tetap hidup.
         if browser is not None:
             try:
-                await browser.disconnect()
+                await browser.close()  # CDP → disconnect ws, tidak kill browser
             except Exception:
                 pass
         if pw is not None:
@@ -606,7 +642,7 @@ async def _prompt_user_login(detected: "DetectedBrowser") -> bool:
     finally:
         if browser is not None:
             try:
-                await browser.disconnect()
+                await browser.close()  # CDP connect → detach ws, tidak kill browser user
             except Exception:
                 pass
         if pw is not None:
@@ -808,7 +844,7 @@ async def _inject_cookies_and_recheck(detected: "DetectedBrowser",
     finally:
         if browser is not None:
             try:
-                await browser.disconnect()
+                await browser.close()  # CDP connect → detach ws, tidak kill browser user
             except Exception:
                 pass
         if pw is not None:
