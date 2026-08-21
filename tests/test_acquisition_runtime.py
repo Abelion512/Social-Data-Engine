@@ -13,6 +13,12 @@ Proves (no browser, no network, stdlib only):
  8. TikTok-shaped payloads run on the runtime        → the proven 198+ page script
  9. A second fake provider runs unmodified           → runtime untouched per provider
 10. Resuming a COMPLETED run reports persisted count → no provider call, no rewrite
+11. max_items is a HARD cap                          → oversized pages truncated,
+                                                       dupes never consume budget,
+                                                       resume respects remaining cap
+12. Crash recovery at the commit boundary (simulated) → dataset valid, old
+                                                       checkpoint readable, replay
+                                                       without duplicates
 
 Run:  python -m pytest tests/test_acquisition_runtime.py -v
       python tests/test_acquisition_runtime.py
@@ -33,7 +39,9 @@ if str(ROOT) not in sys.path:
 from src.runtime import (
     AcquisitionActor,
     AcquisitionRuntime,
+    CheckpointStore,
     PageResult,
+    PaginationState,
     RunContext,
     RunOptions,
     Outcome,
@@ -359,6 +367,181 @@ def test_tiktok_shaped_actor_runs_on_runtime_past_198_boundary():
         assert s.metrics["pages_succeeded"] == 3
 
 
+# ── 11. HARD item cap: oversized page never persists past max_items ─────────
+
+def test_max_items_hard_limit_oversized_page():
+    """max_items=25 with a 50-unique-item page → exactly 25 persisted."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ctx = make_ctx(tmpdir)
+        actor = FakeActor([
+            PageResult(items=items("a", 0, 50), next_cursor=50, has_more=True),
+        ])
+        s = run(AcquisitionRuntime().run(actor, ctx, RunOptions(max_items=25)))
+
+        assert s.items_seen == 25                       # hard cap respected
+        assert s.termination_reason == "max_comments_reached"
+        assert s.outcome == Outcome.CAP_REACHED
+        lines = read_lines(ctx.dataset_path)
+        assert len(lines) == 25                         # dataset truncated too
+        assert len({r["item_id"] for r in lines}) == 25
+        # checkpoint holds the SAME count as the dataset
+        ckpt = json.loads(Path(ctx.checkpoint_path).read_text())
+        assert ckpt["items_seen"] == 25
+        assert ckpt["pagination"]["items_seen"] == 25
+        # provider was NOT re-fetched after the cap (single call total)
+        assert len(actor.calls) == 1
+
+
+def test_resume_respects_remaining_cap():
+    """Dataset already has 20 (capped run); resume with max_items=25 and a
+    50-item page → exactly 5 NEW items persisted, then cap terminates."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ctx = make_ctx(tmpdir)
+        actor = FakeActor([
+            PageResult(items=items("a", 0, 50), next_cursor=50, has_more=True),
+            PageResult(items=items("a", 50, 50), next_cursor=100, has_more=False),
+        ])
+        s1 = run(AcquisitionRuntime().run(actor, ctx, RunOptions(max_items=20)))
+        assert s1.items_seen == 20
+        assert s1.termination_reason == "max_comments_reached"
+
+        calls_before = len(actor.calls)
+        s2 = run(AcquisitionRuntime().run(
+            actor, ctx, RunOptions(max_items=25, resume=True)))
+
+        assert s2.resumed is True
+        assert s2.items_written == 5                    # only the remaining budget
+        assert s2.items_seen == 25                      # never exceeds the new cap
+        assert s2.termination_reason == "max_comments_reached"
+        lines = read_lines(ctx.dataset_path)
+        assert len(lines) == 25
+        assert len({r["item_id"] for r in lines}) == 25
+        ckpt = json.loads(Path(ctx.checkpoint_path).read_text())
+        assert ckpt["items_seen"] == 25 == len(lines)
+        assert len(actor.calls) > calls_before          # continuation fetched once more
+
+
+def test_duplicate_heavy_page_does_not_consume_cap():
+    """Dupes are filtered BEFORE the budget math: a 40-item page with 30 dupes
+    persists its 20 new items without wasting any of max_items=25."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ctx = make_ctx(tmpdir)
+        first = items("d", 0, 15)
+        second = first[:10] + items("d", 15, 30)       # 10 dupes + 30 new = 40 gross
+        actor = FakeActor([
+            PageResult(items=first, next_cursor=50, has_more=True),
+            PageResult(items=second, next_cursor=90, has_more=False),
+        ])
+        s = run(AcquisitionRuntime().run(actor, ctx, RunOptions(max_items=25)))
+
+        # 15 + 30 unique available; cap 25 → exactly 25 persisted, dupes free
+        assert s.items_seen == 25
+        ids = {r["item_id"] for r in read_lines(ctx.dataset_path)}
+        assert len(ids) == 25
+        assert s.metrics["items_deduplicated"] >= 10    # dedup still recorded
+
+
+def test_checkpoint_matches_dataset_at_cap():
+    """After a mid-page cap stop, checkpoint item count == dataset record count
+    AND pagination state is restorable at that exact position."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ctx = make_ctx(tmpdir)
+        actor = FakeActor([
+            PageResult(items=items("k", 0, 40), next_cursor=40, has_more=True),
+        ])
+        run(AcquisitionRuntime().run(actor, ctx, RunOptions(max_items=12)))
+
+        lines = read_lines(ctx.dataset_path)
+        ckpt_raw = json.loads(Path(ctx.checkpoint_path).read_text())
+        assert ckpt_raw["status"] == "done"
+        assert ckpt_raw["items_seen"] == len(lines) == 12
+        restored = PaginationState.from_dict(ckpt_raw["pagination"])
+        assert restored.items_seen == 12
+        assert restored.termination_reason == "max_comments_reached"
+
+
+# ── 12. Crash recovery at the commit boundary (simulated, no process kill) ──
+# These inject OSError at the checkpoint-commit boundary. They prove ordering
+# + replay correctness, NOT power-loss durability.
+
+def test_crash_dataset_persisted_checkpoint_commit_fails():
+    """A: append succeeded, checkpoint save raised → old checkpoint stays
+    readable, dataset stays valid, resume replays without duplicates."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ctx = make_ctx(tmpdir)
+        actor = FakeActor([
+            PageResult(items=items("x", 0, 30), next_cursor=30, has_more=True),
+            PageResult(items=items("x", 30, 30), next_cursor=60, has_more=False),
+        ])
+        rt = AcquisitionRuntime(print_fn=lambda *_: None)
+        run(rt.run(actor, ctx, RunOptions(max_items=35)))   # stops mid-run at cap
+        good_lines = read_lines(ctx.dataset_path)
+        assert len(good_lines) == 35
+        old_ckpt = json.loads(Path(ctx.checkpoint_path).read_text())
+
+        original_save = CheckpointStore.save
+        CheckpointStore.save = lambda self, data: (_ for _ in ()).throw(
+            OSError("simulated disk full during commit"))
+        try:
+            crashed = run(rt.run(
+                actor, ctx, RunOptions(max_items=60, resume=True)))
+            raise AssertionError("expected the commit failure to propagate")
+        except OSError:
+            pass
+        finally:
+            CheckpointStore.save = original_save
+
+        # Dataset survived intact and valid JSONL
+        after_crash = read_lines(ctx.dataset_path)
+        assert len(after_crash) >= len(good_lines)
+        ids = [r["item_id"] for r in after_crash]
+        assert len(ids) == len(set(ids))                # no torn/dup records
+        # Old checkpoint remains readable with its previous content
+        still = json.loads(Path(ctx.checkpoint_path).read_text())
+        assert still["job_id"] == old_ckpt["job_id"]
+        assert still["updated_at"] == old_ckpt["updated_at"]
+
+        # Clean resume: replay does not duplicate anything already persisted
+        s3 = run(AcquisitionRuntime(print_fn=lambda *_: None).run(
+            actor, ctx, RunOptions(max_items=60, resume=True)))
+        final_lines = read_lines(ctx.dataset_path)
+        final_ids = {r["item_id"] for r in final_lines}
+        assert len(final_ids) == len(final_lines)       # zero duplicate rows
+        assert s3.items_seen == len(final_lines) == 35  # source exhausted at 35
+        assert s3.termination_reason == "has_more_false"
+
+
+def test_crash_checkpoint_temp_write_fails_previous_readable():
+    """B: temp-write fails on the very first commit → previously seeded valid
+    checkpoint remains readable and untouched."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ctx = make_ctx(tmpdir)
+        store = CheckpointStore(ctx.checkpoint_path)
+        seed = {"job_id": ctx.job_id, "status": "seeded", "marker": True,
+                "pagination": {"cursor": 7}}
+        store.save(seed)
+
+        actor = FakeActor([
+            PageResult(items=items("y", 0, 10), next_cursor=10, has_more=False),
+        ])
+        original_save = CheckpointStore.save
+        def _boom(self, data):
+            raise OSError("simulated temp-write failure")
+        CheckpointStore.save = _boom
+        try:
+            run(AcquisitionRuntime(print_fn=lambda *_: None).run(actor, ctx))
+            raise AssertionError("expected commit failure to propagate")
+        except OSError:
+            pass
+        finally:
+            CheckpointStore.save = original_save
+
+        loaded = store.load()
+        assert loaded == seed                           # previous ckpt intact
+        # (no fresh-run rerun here on purpose: rerunning without resume over a
+        # populated dataset path is the documented fresh-run limitation)
+
+
 # ── 9. A second provider needs zero runtime changes ──────────────────────────
 
 # ── 10. Resume of an already-completed checkpoint ────────────────────────────
@@ -447,6 +630,12 @@ if __name__ == "__main__":
         test_tiktok_shaped_actor_runs_on_runtime_past_198_boundary,
         test_second_provider_runs_unmodified,
         test_resume_completed_checkpoint_reports_persisted_items_seen,
+        test_max_items_hard_limit_oversized_page,
+        test_resume_respects_remaining_cap,
+        test_duplicate_heavy_page_does_not_consume_cap,
+        test_checkpoint_matches_dataset_at_cap,
+        test_crash_dataset_persisted_checkpoint_commit_fails,
+        test_crash_checkpoint_temp_write_fails_previous_readable,
     ]
     passed = failed = 0
     for t in tests:

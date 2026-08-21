@@ -75,7 +75,29 @@ Key engine invariants:
 - `has_more=None` from an actor is treated as `False` (explicit contract).
 - actor exceptions are converted to classified `fetch_failure` page results.
 - configured caps (`max_items`, `max_pages`) are **not terminal**: a resumed run
-  re-evaluates them against the new budget.
+  re-evaluates them against the new budget. `max_items` is a HARD limit enforced
+  mid-page: after id-dedup, only the remaining budget's worth of new unique
+  items is persisted, then the run stops with `max_comments_reached` (cap
+  dominates completion signals like `has_more_false`; genuine failure reasons
+  from `process_page` keep priority). Duplicates never consume the cap.
+
+### Item-count sources of truth
+
+Seven counters exist; exactly one is authoritative:
+
+| Counter | Role |
+|---|---|
+| `dataset.seen_ids` | **SOURCE OF TRUTH** — disk-backed unique ids actually persisted |
+| `state.items_seen` | cache, synced to `len(dataset.seen_ids)` via `record_items()` after every batch |
+| `metrics.items_unique` | cache, set to the same value by `record_items()` |
+| `metrics.items_collected` | telemetry only — cumulative GROSS items fetched (incl. dupes), never authoritative |
+| `summary.items_seen` | snapshot of `len(dataset.seen_ids)` at return time |
+| `checkpoint.items_seen` (+ `pagination.items_seen`) | snapshot persisted atomically AFTER each dataset write |
+| `summary.items_written` | delta appended during THIS invocation only |
+
+Invariant: every cached counter must equal `len(dataset.seen_ids)` at commit/
+return boundaries; only `items_collected` (gross) and `items_written` (delta)
+intentionally differ.
 
 ## D. Tests
 

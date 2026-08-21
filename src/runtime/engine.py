@@ -177,6 +177,15 @@ class AcquisitionRuntime:
                     continue
                 unique.append(item)
 
+            # 3b. HARD item cap: the run must never persist more than
+            # options.max_items UNIQUE items, even when a single page
+            # overshoots the remaining budget. Dupes were already excluded
+            # above, so they never consume the cap.
+            remaining = options.max_items - len(dataset.seen_ids)
+            overflow = len(unique) > remaining
+            if overflow:
+                unique = unique[:max(remaining, 0)]
+
             # 4. Advance pagination state (stall / empty / completion semantics).
             # NOTE: the GROSS page items are passed (with deduplicated=dups) —
             # identical to the TikTok collector — so a fully-duplicated page
@@ -195,6 +204,17 @@ class AcquisitionRuntime:
 
             state.record_items(len(dataset.seen_ids))
             self._commit(ckpt, ctx, state, dataset, status="running")
+
+            # Cap reached mid-page: stop with the legacy cap reason AFTER the
+            # truncated batch is durably persisted and checkpointed. Cap
+            # dominates COMPLETION signals (the run was budget-cut even if the
+            # provider also said has_more=false); genuine failure reasons
+            # (auth/stall/parse) recorded by process_page keep priority.
+            if overflow and state.termination_reason in (
+                    None, "has_more_false", "finished"):
+                state.has_more = False
+                state.termination_reason = "max_comments_reached"
+                self._print(f"[runtime] cap {options.max_items} reached mid-page — stopping")
 
             if state.termination_reason:
                 self._print(f"[runtime] pagination finished: {state.termination_reason}")
