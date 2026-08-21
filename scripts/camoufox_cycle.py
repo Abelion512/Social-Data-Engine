@@ -7,7 +7,6 @@ Strategi: Camoufox crash (~2 batch expand). Solusi: batasi batch per browser
 import asyncio
 import json
 import random
-import re
 import sys
 import time
 from pathlib import Path

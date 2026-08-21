@@ -14,13 +14,12 @@ from src.schema.canonical import (
     Observation,
     Content,
     Provenance,
-    Entity,
     Confidence,
     Annotation,
 )
 from src.tiktok_schema import RawComment, normalize_text, SCHEMA_VERSION
 
-PIPELINE_VERSION = "1.0.0"
+PIPELINE_VERSION = "1.1.0"
 
 
 def tiktok_to_canonical(raw: RawComment) -> Observation:

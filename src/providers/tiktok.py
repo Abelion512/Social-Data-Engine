@@ -9,16 +9,13 @@ TikTok, LinkedIn, YouTube, atau Reddit.
 """
 from __future__ import annotations
 
-import asyncio
-import re
-import time
-from typing import List, Dict, Optional
+from typing import List, Dict
 
-from src.providers.base import ProviderAdapter, AgentProvider
+from src.providers.base import AgentProvider
 from src.harness.registry import harness
 from src.schema.canonical import Observation
 from src.schema.mapper import tiktok_to_canonical
-from src.tiktok_schema import RawComment, write_jsonl
+from src.tiktok_schema import RawComment
 
 try:
     from camoufox.async_api import AsyncCamoufox
@@ -48,11 +45,14 @@ class TikTokAdapter(AgentProvider):
     def toolkit(self):
         """TikTok-specific tool bindings + reply-thread strategy."""
         from src.harness.tools import default_toolkit, RouteCapture
+        from src.harness.human import CaptchaSolver
         kt = default_toolkit()
         # TikTok: replies under [data-e2e="comment"] threads; route captures
         # /comment/list/reply — parent_comment_id parsed di collector._on_route.
-        # Stateful container (fresh per toolkit) → thread-aware capture.
+        # Stateful container (fresh per toolkit) -> thread-aware capture.
         kt["route.capture"] = RouteCapture(captured_pages=[], counters={"route": 0, "api": 0, "dom": 0})
+        # human_act: captcha resolve tool (slider/image) selectable oleh agent.
+        kt["solve_captcha"] = CaptchaSolver()
         return kt
 
     async def collect(self, url: str, **kwargs) -> List[Observation]:

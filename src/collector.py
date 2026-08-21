@@ -14,33 +14,38 @@ Usage:
 from __future__ import annotations
 import asyncio
 import json
-import os
 import re
+import os
 import sys
 import time
+import random
 from pathlib import Path
 from typing import List, Dict, Optional
 
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+# Installable/portable data root — set $SDE_DATA_DIR untukarahkan ke mana saja
+# (konsep portability sama .venv). Default → repo-root/data.
+DATA_DIR = Path(os.environ.get("SDE_DATA_DIR") or (_ROOT / "data"))
 
 from src.browser_selector import BrowserSession
-from camoufox.async_api import AsyncCamoufox
-
+from src.harness.human import (
+    apply_stealth, resolve_captcha_if_present, ahuman_delay,
+    human_click, human_scroll,
+)
 from src.tiktok_schema import (
     RawComment,
-    Author,
     raw_from_api,
     raw_from_dom,
     write_jsonl,
-    COLLECTOR_VERSION,
 )
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 PROFILE_DIR = Path.home() / ".tiktok-linkedin" / "chrome-profile"
 STATE_DIR = Path.home() / ".tiktok-linkedin" / "state"
-DATA_DIR = _ROOT / "data"
+# DATA_DIR sudah didefinisikan di atas (SDE_DATA_DIR env, default repo data) —
+# semua sub-path berikut ikut portabel.
 RAW_DIR = DATA_DIR / "raw"
 MANIFEST_DIR = DATA_DIR / "manifests"
 JOB_DIR = STATE_DIR / "jobs"
@@ -142,7 +147,26 @@ DOM_SCRAPE_JS = r"""(() => {
                 if (p && p.includes('tiktokcdn')) imgs.push(p);
             });
             imgs = imgs.slice(0, 6);
-            if ((!raw || raw.length < 3) && imgs.length === 0) return;
+            // Sticker = GIF (bukan static/avatar) — TikTok kirim sticker GIF via <img>.
+            var imgSrcs = [];
+            el.querySelectorAll('img').forEach(function(img) {
+                var s = img.src || img.getAttribute('data-src') || img.getAttribute('src') || '';
+                if (s) imgSrcs.push(s);
+            });
+            var sticker = null;
+            for (var si = 0; si < imgSrcs.length; si++) {
+                if (imgSrcs[si].indexOf('.gif') !== -1 && imgs.indexOf(imgSrcs[si]) === -1) {
+                    sticker = imgSrcs[si];
+                    break;
+                }
+            }
+            // Voice note = <audio> (atau <video> muted yang sama asalnya suara)
+            var voice = [];
+            el.querySelectorAll('audio').forEach(function(a) {
+                var s = a.src || a.getAttribute('src') || '';
+                if (s) voice.push(s);
+            });
+            if ((!raw || raw.length < 3) && imgs.length === 0 && voice.length === 0 && !sticker) return;
             const wrapper = el.closest('[class*="DivCommentObjectWrapper"], [data-e2e^="comment-item-"]') || el.parentElement;
             let uname = '';
             if (wrapper) {
@@ -164,6 +188,8 @@ DOM_SCRAPE_JS = r"""(() => {
                 raw: raw.substring(0, 400),
                 username: uname || raw.split(' ')[0],
                 images: imgs,
+                audio: voice,
+                sticker: sticker,
                 comment_id: cid,
             });
         });
@@ -241,7 +267,19 @@ VIEW_ALL_JS = r"""(() => {
 CHECK_BLOCK_JS = r"""(() => {
     var bt = document.body ? document.body.innerText.slice(0, 3000) : '';
     var u = window.location.href;
-    return JSON.stringify({ url: u, blocked: /login|verify/i.test(u) || (/Verify/.test(bt) && /human/.test(bt)) });
+    // Challenge sekarang TikTok pakai modal overlay (bukan redirect /verify URL):
+    // cek element CAPTCHA/verification/slider + teks challenge di body.
+    var modal = !!document.querySelector(
+        '[class*="captcha"],[class*="Captcha"],[class*="verify"],[class*="Verify"],'
+        + '[class*="slider"],[class*="Slider"],#tiktok-verify,[data-e2e="captcha"],'
+        + 'iframe[src*="captcha"],iframe[src*="verify"],[class*="verification"],'
+        + '[class*="challenge"],[class*="Challenge"]'
+    );
+    var blocked = /login|verify|captcha|challenge/i.test(u)
+               || (/Verify|Verification|captcha/i.test(bt) && /human|robot/i.test(bt))
+               || /Please verify|are you a human|security check|captcha/i.test(bt.slice(0,400))
+               || modal;
+    return JSON.stringify({ url: u, blocked: blocked, modal: modal });
 })()"""
 
 IMAGE_ENRICH_JS = r"""(comment_ids) => {
@@ -357,20 +395,27 @@ def _b36(n: int) -> str:
 async def _probe_reported_count(page) -> int:
     js = r"""(() => {
         const q = (s) => document.querySelector(s);
-        const el = q('[data-e2e="comment-count"]');
-        if (el) {
-            const t = (el.getAttribute('title') || el.textContent || '').trim();
-            const m = t.match(/(\d[\d.,]*)/);
+        const findNum = (el) => {
+            const t = (el.getAttribute('title') || el.textContent || el.innerText || '').trim();
+            const m = t.match(/(\d[\d.,]*)\s*(?:comments?|komentar)/i);
+            return m ? parseInt(m[1].replace(/[.,]/g, ''), 10) || 0 : 0;
+        };
+        // /photo/ panel: angka kadang di <span> terpisah dari label "Comments"
+        const c = q('[data-e2e="comment-count"]');
+        if (c) {
+            let n = findNum(c);
+            if (!n) { const par = (c.closest('button,div') || c.parentElement); if (par) n = findNum(par); }
+            if (n) return n;
+        }
+        // aria-label / data-e2e yang mengandung angka
+        for (const b of document.querySelectorAll('button, [data-e2e]')) {
+            const l = b.getAttribute('aria-label') || '';
+            const m = l.match(/(\d[\d.,]*)\s*(?:comments?|komentar)/i);
             if (m) return parseInt(m[1].replace(/[.,]/g, ''), 10) || 0;
         }
-        const buttons = document.querySelectorAll('button[aria-label]');
-        for (const b of buttons) {
-            const l = (b.getAttribute('aria-label') || '').toLowerCase();
-            const m = l.match(/(\d[\d.,]*)\s*comments?/);
-            if (m) return parseInt(m[1].replace(/[.,]/g, ''), 10) || 0;
-        }
+        // body panel header
         const bt = document.body ? document.body.innerText : '';
-        const m = bt.match(/(\d[\d.,]*)\s*comments?/i);
+        const m = bt.match(/(\d[\d.,]*)\s*(?:comments?|komentar)/i);
         if (m) return parseInt(m[1].replace(/[.,]/g, ''), 10) || 0;
         return 0;
     })()"""
@@ -383,10 +428,16 @@ async def _probe_reported_count(page) -> int:
         return 0
 
 
-async def fetch_comments_api(page, video_id: str, cursor: int = 0) -> dict:
-    """Fetch komentar dari TikTok API via evaluate (same-origin cookie)."""
+async def fetch_comments_api(page, video_id: str, cursor: int = 0, retries: int = 3) -> dict:
+    """Fetch komentar dari TikTok API via evaluate (same-origin cookie).
+
+    Skala 2K: count=100/page → ~20 page buat 2000 komentar. Retry/backoff
+    (anti rate-limit/challenge) — jangan stop tiap page turun; biarkan
+    caller terus scroll + coba lagi. Jika challenge overlay ada, coba
+    resolve_captcha_if_present sebelum re-fetch.
+    """
     js = f"""async () => {{
-        const url = `https://www.tiktok.com/api/comment/list/?aid=1988&aweme_id={video_id}&count=50&cursor={cursor}&comment_style=2&from=web&device_platform=web&channel=normal&enter_from=comment_detail_page`;
+        const url = `https://www.tiktok.com/api/comment/list/?aid=1988&aweme_id={video_id}&count=100&cursor={cursor}&comment_style=2&from=web&device_platform=web&channel=normal&enter_from=comment_detail_page`;
         try {{
             const r = await fetch(url, {{ credentials: 'include', headers: {{ 'accept': 'application/json, text/plain, */*', 'sec-fetch-site': 'same-origin' }} }});
             const j = await r.json();
@@ -395,23 +446,40 @@ async def fetch_comments_api(page, video_id: str, cursor: int = 0) -> dict:
             return JSON.stringify({{ error: String(e) }});
         }}
     }}"""
-    try:
-        # Playwright's page.evaluate auto-awaits async expressions;
-        # `await_promise=` is NOT a valid kwarg — live test surfaced it as:
-        # "Page.evaluate() got an unexpected keyword argument 'await_promise'".
-        out = await page.evaluate(js)
-    except Exception as e:
-        return {"error": f"evaluate: {e}"}
-    if isinstance(out, list):
-        out = out[0] if out else None
-    if isinstance(out, dict):
-        return out
-    if isinstance(out, str) and out.strip():
+    last_err = "empty result"
+    for attempt in range(retries):
         try:
-            return json.loads(out)
-        except Exception:
-            return {"error": f"parse: {out[:100]}"}
-    return {"error": "empty result"}
+            out = await page.evaluate(js)
+        except Exception as e:
+            last_err = f"evaluate: {e}"
+            await ahuman_delay(3.0, 6.0)
+            continue
+        if isinstance(out, list):
+            out = out[0] if out else None
+        parsed: dict
+        if isinstance(out, dict):
+            parsed = out
+        elif isinstance(out, str) and out.strip():
+            try:
+                parsed = json.loads(out)
+            except Exception:
+                last_err = f"parse: {out[:100]}"
+                await ahuman_delay(2.0, 4.0); continue
+        else:
+            parsed = {"error": last_err}; await ahuman_delay(2.0, 4.0); continue
+
+        if parsed.get("error"):
+            last_err = str(parsed["error"])[:100]
+            # mungkin challenge overlay blokir request — coba resolve, lalu retry
+            try:
+                from src.harness.human import resolve_captcha_if_present
+                await resolve_captcha_if_present(page, attempts=1)
+            except Exception:
+                pass
+            await ahuman_delay(4.0, 7.0)
+            continue
+        return parsed
+    return {"error": last_err}
 
 
 # ── Main capture loop ──────────────────────────────────────────────────────────
@@ -424,6 +492,8 @@ async def _capture_pass(page, video_ctx, captured_pages, all_raw,
     STALE_LIMIT = 6
 
     for i in range(max_scrolls):
+        # human_act: jeda acak sebelum setiap scroll (bukan bot yang pola-pola)
+        await ahuman_delay(0.8, 2.2)
         dom_added = 0
         try:
             dom_str = await page.evaluate(DOM_SCRAPE_JS)
@@ -474,8 +544,10 @@ async def _capture_pass(page, video_ctx, captured_pages, all_raw,
         if has_more:
             pg = await fetch_comments_api(page, video_id, cursor) or {}
             if pg.get("error"):
-                print(f"[api] fetch err: {pg['error'][:100]}")
-                has_more = False
+                # rate-limit/challenge — JANGAN stop; biar iterasi lain retry
+                # (fetch_comments_api udah ada retry internal + human_scroll lazim).
+                print(f"[api] fetch err (retry next iter): {pg['error'][:80]}")
+                # tidak reset cursor/has_more → lanjut ke iterasi berikutnya
             else:
                 for api_comment in pg.get("comments", []):
                     cid = api_comment.get("cid", "")
@@ -486,46 +558,43 @@ async def _capture_pass(page, video_ctx, captured_pages, all_raw,
                     r = raw_from_api(api_comment, video_ctx, method="api")
                     all_raw.append(r)
                     api_added += 1
-                _capture_pass._api_cursor = pg.get("cursor", 0)
+                _capture_pass._api_cursor = pg.get("cursor", cursor)
                 _capture_pass._api_has_more = bool(pg.get("has_more", 0))
-        if api_added == 0:
-            _capture_pass._api_has_more = False
-            _capture_pass._api_cursor = 0
+        # (hapus stale-reset `api_added==0 → has_more=False`) — biar 2K lanjut
+        # meski satu page kosong; hanya berhenti bila API eksplisit has_more=False.
 
-        # Expand replies — RECURSIVE (max 5 rounds per iteration)
+        # Expand nested replies — REKURSIF (max 5 round). Pakai `human_click`
+        # (bukan DOM .click()) karena React listener + /photo/ challenge butuh
+        # realistik mouse event. Expand memicu fetch /comment/list/reply (route
+        # intercept) → chain ke nested reply & scale ke 2K.
+        _REPLY_SELECTORS = [
+            '[data-e2e^="view-more-"]', '[data-e2e*="reply-more"]',
+            '[class*="ReplyActionText"]', '[class*="ViewActionText"]',
+            '[data-e2e="reply-count"]', '[data-e2e*="show-more-reply"]',
+            '[data-e2e*="reply"] button',
+        ]
         for _expand_round in range(5):
+            clicked = 0
+            for sel in _REPLY_SELECTORS:
+                try:
+                    n = await page.locator(sel).count()
+                except Exception:
+                    n = 0
+                for idx in range(n):
+                    if await human_click(page, page.locator(f"{sel} >> nth={idx}")):
+                        clicked += 1
+            # fallback: text "Lihat X balasan / View X replies / Lihat semua"
             try:
-                expand_count = await page.evaluate("""(() => {
-                    var clicked = 0;
-                    var selectors = [
-                        '[data-e2e^="view-more-"]',
-                        '[class*="ReplyActionText"]',
-                        '[class*="ViewActionText"]',
-                        '[data-e2e*="reply-more"]',
-                    ];
-                    selectors.forEach(function(sel) {
-                        document.querySelectorAll(sel).forEach(function(el) {
-                            if (!el.dataset._ttc) { el.click(); el.dataset._ttc = '1'; clicked++; }
-                        });
-                    });
-                    if (clicked === 0) {
-                        document.querySelectorAll('div, span, p, button').forEach(function(el) {
-                            var t = (el.textContent || '').trim();
-                            if (/^View \\d+ repl/i.test(t) || /^Lihat \\d+ balasan/i.test(t) ||
-                                /^View all \\d+ repl/i.test(t)) {
-                                if (!el.dataset._ttc) { el.click(); el.dataset._ttc = '1'; clicked++; }
-                            }
-                        });
-                    }
-                    return clicked;
-                })()""")
-                if isinstance(expand_count, list):
-                    expand_count = expand_count[0] if expand_count else 0
-                if expand_count and expand_count > 0:
-                    await asyncio.sleep(2)
-                else:
-                    break
+                matches = await page.locator(
+                    "text=/Lihat (semua )?\\d+ balas|View (all )?\\d+ repl/i").all()
             except Exception:
+                matches = []
+            for el in matches:
+                if await human_click(page, el):
+                    clicked += 1
+            if clicked > 0:
+                await ahuman_delay(0.6, 1.4)
+            else:
                 break
 
         # Image enrichment
@@ -582,6 +651,9 @@ async def _capture_pass(page, video_ctx, captured_pages, all_raw,
             await page.evaluate(SCROLL_JS)
         except Exception:
             pass
+        # Jika DOM-container scroll gagal (panel tertutup/challenge), viewport
+        # scroll natural (human_scroll) tetap trigger TikTok lazy API fetch.
+        await human_scroll(page, delta=random.randint(600, 1100), times=1)
         await asyncio.sleep(2)
     return new
 
@@ -589,8 +661,8 @@ async def _capture_pass(page, video_ctx, captured_pages, all_raw,
 # ── Main entry point ───────────────────────────────────────────────────────────
 async def collect_video(
     video_url: str,
-    max_scrolls: int = 60,
-    max_comments: int = 300,
+    max_scrolls: int = 200,
+    max_comments: int = 2000,
     resume: Optional[str] = None,
     force_camoufox: bool = False,
 ) -> Dict:
@@ -628,6 +700,12 @@ async def collect_video(
         mode = "CDP" if session.is_cdp else "Camoufox"
         print(f"[collector] Browser mode: {mode}")
 
+        # human_act first: stealth fingerprint overrides (defense-in-depth atop
+        # Camoufox's built-in anti-detect). Applied before nav so TikTok's bot
+        # detection never sees a stock headless signature.
+        stealth = await apply_stealth(page)
+        print(f"[human] stealth: {stealth}")
+
         # Setup route intercept (replaces CDP Fetch intercept)
         await _setup_route_intercept(page, captured_pages, route_counters)
 
@@ -643,8 +721,18 @@ async def collect_video(
             except Exception:
                 s = {}
             if s.get("blocked"):
-                print(f"[!] TikTok blocked (login/verify) at {s.get('url', '?')}")
-                return {"error": "blocked", "status": "blocked"}
+                # human_act first: rather than bail on verify/captcha, ATTEMPT to
+                # resolve it (slider drag via vision/mouse, image captcha via
+                # 9Router Gemini vision). Only bail if resolution fails.
+                print(f"[human] TikTok blocked (verify/captcha) at {s.get('url', '?')} — attempting resolution")
+                res = await resolve_captcha_if_present(page, attempts=2)
+                print(f"[human] captcha resolve result: {res}")
+                if res.get("solved"):
+                    print("[human] captcha solved — continuing collection")
+                    await asyncio.sleep(3)
+                    continue
+                print(f"[!] TikTok blocked (login/verify) at {s.get('url', '?')} — captcha tidak terpecahkan")
+                return {"error": "blocked", "status": "blocked", "captcha": res}
             if attempt < 2:
                 await asyncio.sleep(3)
 
@@ -666,17 +754,29 @@ async def collect_video(
                 video_ctx["video_url"] = video_url
 
             # Open comment panel
+            # DOM `.click()` di CLICK_COMMENT_PANEL_JS sering TIDAK trigger React
+            # listener TikTok → panel tak terbuka ("not found" meski elemen ada,
+            # apalagi di /photo/ carousel). Pakai `page.click` (realistic mouse)
+            # + wait_render sebelum klik.
+            open_sel = '[data-e2e="comment-icon"], [data-e2e="comment-count"]'
+            try:
+                await page.wait_for_selector(open_sel, state="attached", timeout=15000)
+            except Exception:
+                pass  # tetap coba klik
             click_result = "not found"
             for attempt in range(5):
                 try:
-                    click_result = await page.evaluate(CLICK_COMMENT_PANEL_JS)
-                except Exception:
-                    click_result = "eval error"
-                print(f"[collector] open panel: {click_result}")
-                if click_result != "not found":
+                    await page.click(open_sel, timeout=5000)
+                    click_result = "clicked via page.click"
+                except Exception as e:
+                    click_result = f"click err: {str(e)[:40]}"
+                print(f"[collector] open panel (attempt {attempt+1}): {click_result}")
+                levels = await page.evaluate('document.querySelectorAll(\'[data-e2e^="comment-level-"]\').length')
+                if levels > 0:
+                    print(f"[collector] ✓ comment panel terbuka ({levels} level items)")
                     break
                 await asyncio.sleep(2)
-            if click_result == "not found":
+            if click_result not in ("clicked via page.click",):
                 va = await page.evaluate(VIEW_ALL_JS)
                 print(f"[collector] view-all: {va}")
                 await asyncio.sleep(2)
@@ -708,7 +808,7 @@ async def collect_video(
                                      parent_comment_id=pg.get("parent_comment_id", ""))
                 all_raw.append(r)
 
-        final_written = write_jsonl(str(out_path), [r.to_dict() for r in all_raw])
+        write_jsonl(str(out_path), [r.to_dict() for r in all_raw])
 
         # Collection completeness
         captured = len(all_raw)
@@ -741,6 +841,7 @@ async def collect_video(
         "video_id": video_id,
         "output": str(out_path),
         "comments": captured,
+        "mode": "cdp" if session.is_cdp else "camoufox",
         "job_id": job_state["job_id"],
         "reported_comment_count": reported_count,
         "coverage": coverage,
@@ -774,11 +875,12 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="TikTok Comment Collector")
     parser.add_argument("url", nargs="*", help="TikTok video URL(s)")
-    parser.add_argument("--scrolls", type=int, default=60, help="Max scroll iterations")
-    parser.add_argument("--max", type=int, default=300, help="Max comments")
+    parser.add_argument("--scrolls", type=int, default=200, help="Max scroll iterations")
+    parser.add_argument("--max", type=int, default=2000, help="Max comments")
     parser.add_argument("--resume", help="Resume job ID (video_id)")
     parser.add_argument("--login", action="store_true", help="Login only")
     parser.add_argument("--camoufox", action="store_true", help="Force Camoufox (skip CDP detection)")
+    parser.add_argument("--csv", action="store_true", help="Ekspor tambahan CSV (.csv) dari JSONL hasil")
     parser.add_argument("--detect", action="store_true", help="Detect running browsers via CDP")
     args = parser.parse_args()
 
@@ -788,15 +890,23 @@ def main():
     elif args.login or not args.url:
         asyncio.run(login_only())
     else:
+        from src.export import csv_from_jsonl
         for u in args.url:
             print(f"\n########## COLLECT: {u} ##########\n")
-            asyncio.run(collect_video(
+            r = asyncio.run(collect_video(
                 video_url=u,
                 max_scrolls=args.scrolls,
                 max_comments=args.max,
                 resume=args.resume,
                 force_camoufox=args.camoufox,
             ))
+            if args.csv and r and r.get("output"):
+                csv_path = csv_from_jsonl(r["output"])
+                try:
+                    rc = sum(1 for _ in open(csv_path, encoding="utf-8")) - 1
+                except Exception:
+                    rc = 0
+                print(f"[export] CSV -> {csv_path} ({rc} rows)")
 
 
 if __name__ == "__main__":

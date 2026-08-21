@@ -7,7 +7,7 @@ keduanya di-identifikasi sebagai entity yang sama dengan confidence score.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 from difflib import SequenceMatcher
 
 from src.schema.canonical import Entity, Observation, Confidence

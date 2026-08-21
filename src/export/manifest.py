@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Dict, List, Any
 from datetime import datetime, timezone
 
-from src.schema.canonical import Observation
 
 
 def build_manifest(base_dir: Path) -> Dict[str, Any]:

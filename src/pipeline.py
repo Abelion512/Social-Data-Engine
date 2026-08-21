@@ -17,9 +17,7 @@ Usage:
   python pipeline.py --video VID --stage quality
 """
 from __future__ import annotations
-import argparse
 import json
-import os
 import re
 import sys
 import time
@@ -35,16 +33,12 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from src.tiktok_schema import (
-    SCHEMA_VERSION,
     COLLECTOR_VERSION,
     normalize_text,
     raw_to_normalized,
     write_jsonl,
     RawComment,
     Author,
-    NormalizedComment,
-    EnrichedComment,
-    CuratedComment,
 )
 
 # ── Paths ─────────────────────────────────────────────────────────────────────

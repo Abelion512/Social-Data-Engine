@@ -35,14 +35,13 @@ Poin desain kunci:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Callable, Dict, Any
 import logging
 import time
 
 from src.schema.canonical import Observation
-from src.pipeline.quality import compute_quality_score
 
 logger = logging.getLogger(__name__)
 
@@ -280,7 +279,6 @@ class SelfHealingPipeline:
     def _record_plan(self, plan: ImprovementPlan, m: PipelineMetrics) -> None:
         """Persist improvement provenance ke manifest (auditable)."""
         import json
-        from pathlib import Path
         mfile = self.base_dir / "data" / "manifests" / f"{plan.video_id}.improve.jsonl"
         mfile.parent.mkdir(parents=True, exist_ok=True)
         with mfile.open("a", encoding="utf-8") as f:

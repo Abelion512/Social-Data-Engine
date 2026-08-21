@@ -2,7 +2,6 @@
 """Probe Playwright: buka panel komentar TikTok dengan robust + interaksi manusiawi."""
 import asyncio
 import random
-import sys
 from playwright.async_api import async_playwright
 
 URL = "https://www.tiktok.com/@enxayeti/video/7669640839861112071"
