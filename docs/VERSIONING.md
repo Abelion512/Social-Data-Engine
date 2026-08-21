@@ -100,7 +100,41 @@ python scripts/version_bump.py --bump patch --commit   # commit + tag vX.Y.Z
 python scripts/version_bump.py --bump minor --commit --push  # push tag
 ```
 
-CI `.github/workflows/versioning.yml` → job **`auto-version-bump`** (workflow_dispatch `action=bump`, `bump=patch|minor|major`)
-atau **`versioning-check`** (`action=check`) untuk validasi manual.
+### Menentukan bump: `scripts/suggest_bump.py`
 
+Bukan feeling — lihat commit sejak tag terakhir, klasifikasikan conventional
+commits, ambil sinyal tertinggi:
+
+| Commit | Sinyal |
+|---|---|
+| `BREAKING CHANGE:` footer atau `type!:` | major |
+| `feat:` | minor |
+| `fix:` / `perf:` | patch |
+| lainnya (`chore:`/`docs:`/`test:`/`ci:`/…) | tanpa sinyal (floor patch) |
+
+```bash
+python scripts/suggest_bump.py            # laporan teks + saran
+python scripts/suggest_bump.py --json     # machine-readable (untuk CI)
+python scripts/suggest_bump.py --from vX.Y.Z   # override base tag
+```
+
+Saran = sinyal tertinggi yang ada. Contoh: satu `feat:` + tiga `fix:` →
+**minor**. Script ini hanya *saran* — gerbang live-test (agents.md) tetap
+wajib lolos sebelum bump nyata.
+
+## Versioning Automation (CI)
+
+`.github/workflows/versioning.yml`:
+
+| Job | Pemicu | Perilaku |
+|---|---|---|
+| **`suggest-bump`** | setiap `pull_request` | laporan saran bump dari commits sejak tag terakhir — *informational*, tidak block merge |
+| **`versioning-check`** | workflow_dispatch `action=check` | validasi manual: konstanta versi + compile + scope docs + JSON saran bump |
+| **`auto-version-bump`** | workflow_dispatch `action=bump`, `bump=patch\|minor\|major` | downgrade guard → bump + commit + tag + push |
+| `verify-tag` / `release-notes` / `prevent-new-platform-before-stable` | push tag `v*` / release | validasi semver, changelog otomatis, guard scope platform |
+
+> **Downgrade guard** (di `auto-version-bump`): bila part yang dipilih lebih
+> rendah dari saran `suggest_bump.py` (misal pilih `patch` padahal ada
+> `feat:`), job gagal sebelum commit/tag. Memilih sama atau lebih tinggi lolos.
+>
 > 9Router / LLM model versions **never** dipush oleh tool ini — hanya data-layer constants.
