@@ -8,6 +8,8 @@ on:
       - 'v*'
   release:
     types: [published]
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       action:
@@ -107,12 +109,32 @@ jobs:
           fi
           echo "✅ no new platform before 1.0 — scope policy enforced"
 
+  suggest-bump:
+    name: Bump suggestion (commits since last tag)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # needs full history + tags for describe/log
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run suggest_bump report
+        run: |
+          python -m py_compile scripts/suggest_bump.py
+          python scripts/suggest_bump.py
+          echo "ℹ️ informational only — apply via action=bump after live-test gate"
+
   versioning-check:
     name: Versioning check (workflow_dispatch / manual)
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # suggest_bump needs tags + commit history
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -127,6 +149,8 @@ jobs:
           python -c 'import importlib.util; s=importlib.util.spec_from_file_location("v","scripts/version_bump.py"); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print("current →", ".".join(map(str,m._read_current())))'
           echo "=== cross-check VERSIONING.md scope ==="
           grep -qi "TikTok + LinkedIn" docs/VERSIONING.md && echo "✅ scope policy in docs"
+          echo "=== bump suggestion from commits since last tag ==="
+          python scripts/suggest_bump.py --json
 
   auto-version-bump:
     name: Auto bump (major|minor|patch)
@@ -142,6 +166,22 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Downgrade guard (chosen < suggested?)
+        env:
+          BUMP_PART: ${{ github.event.inputs.bump }}
+        run: |
+          SUGGESTED=$(python scripts/suggest_bump.py --json \
+            | python -c 'import json,sys; print(json.load(sys.stdin)["suggested_bump"])')
+          RANK="major=3 minor=2 patch=1"
+          CHOSE=$(echo "$RANK" | grep -o "$BUMP_PART=[0-9]" | cut -d= -f2)
+          WANT=$(echo "$RANK"  | grep -o "$SUGGESTED=[0-9]" | cut -d= -f2)
+          echo "chosen=$BUMP_PART ($CHOSE)  suggested=$SUGGESTED ($WANT)"
+          if [ "$CHOSE" -lt "$WANT" ]; then
+            echo "❌ chosen bump '$BUMP_PART' is LOWER than suggested '$SUGGESTED'";
+            echo "   commits since last tag include higher-signal changes."; exit 1
+          fi
+          echo "✅ chosen bump >= suggested — proceed"
 
       - name: Configure git
         run: |

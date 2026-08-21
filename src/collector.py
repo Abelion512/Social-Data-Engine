@@ -70,23 +70,21 @@ def raw_path(video_id: str) -> Path:
 
 
 # ── Job checkpoint ─────────────────────────────────────────────────────────────
+def _job_store(video_id: str):
+    """CheckpointStore for one job — delegates atomic durability to the
+    provider-independent runtime (tmp write + replace)."""
+    from src.runtime.checkpoint import CheckpointStore
+    return CheckpointStore(JOB_DIR / f"{video_id}.json")
+
+
 def save_job(video_id: str, data: dict):
     """Save checkpoint atomically via temporary file replacement."""
     ensure_dirs()
-    p = JOB_DIR / f"{video_id}.json"
-    temp_p = JOB_DIR / f"{video_id}.json.tmp"
-    temp_p.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-    temp_p.replace(p)
+    _job_store(video_id).save(data)
 
 
 def load_job(video_id: str) -> Optional[dict]:
-    p = JOB_DIR / f"{video_id}.json"
-    if p.exists():
-        try:
-            return json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-    return None
+    return _job_store(video_id).load()
 
 
 # ── Video context probe ────────────────────────────────────────────────────────

@@ -88,7 +88,16 @@ Pipeline stages are designed to be resumable and idempotent where practical.
 ```text
 src/
 ├── collector.py              # TikTok acquisition engine
-├── tiktok_schema.py          # Raw TikTok schema + pagination/checkpoint state
+├── tiktok_schema.py          # Raw TikTok schema (re-exports runtime primitives)
+├── runtime/                  # Provider-independent acquisition runtime core
+│   ├── context.py            # RunContext (run/job identity, paths)
+│   ├── state.py              # Pagination/retry/termination state
+│   ├── metrics.py            # AcquisitionMetrics
+│   ├── checkpoint.py         # Atomic checkpoint store
+│   ├── dataset.py            # Id-dedup JSONL event sink
+│   ├── actor.py              # AcquisitionActor contract
+│   ├── engine.py             # AcquisitionRuntime loop
+│   └── termination.py        # Termination taxonomy / outcome classification
 ├── providers/
 │   ├── base.py               # Provider interfaces
 │   └── tiktok.py              # TikTok provider adapter
@@ -117,6 +126,7 @@ scripts/
 tests/
 ├── test_tiktok_pagination.py # Pagination / checkpoint invariants
 ├── test_acquisition_hardening.py
+├── test_acquisition_runtime.py # Provider-independent runtime core tests
 ├── test_dedup.py
 ├── test_self_improvement.py
 └── run_dedup_quality_tests.py
@@ -190,6 +200,7 @@ source .venv/bin/activate
 
 python -m pytest tests/test_tiktok_pagination.py -v
 python -m pytest tests/test_acquisition_hardening.py -v
+python -m pytest tests/test_acquisition_runtime.py -v
 python -m pytest tests/test_dedup.py -v
 python -m pytest tests/test_self_improvement.py -v
 python tests/run_dedup_quality_tests.py
