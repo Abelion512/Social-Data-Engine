@@ -32,17 +32,25 @@ state/
 .tiktok-linkedin/
 *.tokens.json
 
-# Scraped corpus: data/ & *.jsonl TRACKED (hasil scrap publik), karena hasil
-# scraping adalah output utama pipeline (bukan sampah). Hanya output TRANSISEN
-# (run metrics / improve output / temp) yang di-exclude:
-data/benchmarks/
-data/manifests/*.improve.jsonl
-*.tmp
-# pastikan folder penting selalu ada di repo meski kosong
+# Scraped corpus: data/ output TIDAK di-track lagi (privacy — berisi data asli
+# pengguna TikTok: handle, komentar, timestamp). Yang tersisa di repo hanya
+# placeholder .gitkeep + fixture sintetis data/samples/. Semua output runtime
+# acquisition (raw/curated/normalized/enriched/rejected/manifests) lokal saja:
+data/raw/*
+!data/raw/.gitkeep
+data/curated/*
+data/normalized/*
+data/enriched/*
+data/rejected/*
+data/manifests/*
+!data/manifests/.gitkeep
 !data/
 !data/raw/
 !data/samples/
+!data/samples/*
 !data/manifests/
+data/benchmarks/
+*.tmp
 
 # IDE
 .vscode/
