@@ -875,6 +875,9 @@ async def collect_video(
             "metrics": job_state.get("metrics"),
         }
         pagination_state = PaginationState.from_dict(pag_dict)
+        if pagination_state.termination_reason == "max_comments_reached" and pagination_state.items_seen < max_comments:
+            pagination_state.has_more = True
+            pagination_state.termination_reason = None
         print(f"[collector] Resume job: cursor={pagination_state.cursor}, seen={pagination_state.items_seen}, page={pagination_state.page_index}")
     else:
         pagination_state = PaginationState()
