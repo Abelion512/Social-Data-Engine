@@ -68,7 +68,8 @@ raising (runtime classifies as `fetch_failure`) or via `PageResult(error=..., er
 
 See `src/runtime/` (above) and `tests/test_acquisition_runtime.py`.
 Key engine invariants:
-- gross page items are passed to `process_page` with `deduplicated=N`, so a
+- gross page items are passed to `PaginationState.process_page` (a state API,
+  NOT part of the actor contract) with `deduplicated=N`, so a
   fully-duplicated page with an unchanged cursor registers as a **stall**, not an
   empty page (byte-compatible with the TikTok collector's semantics).
 - `has_more=None` from an actor is treated as `False` (explicit contract).
@@ -78,17 +79,20 @@ Key engine invariants:
 
 ## D. Tests
 
-`tests/test_acquisition_runtime.py` — 8 deterministic tests (stdlib, no browser):
-1. actor can start a run → dataset + checkpoint written
-2. checkpoint is atomic and restorable
-3. resume continues from cursor with zero duplicates
-4. retry state survives in checkpoint (incl. pending-retry round-trip)
-5. termination reason + outcome preserved (auth-block, stall, cap, retry-budget)
-6. metrics recorded (attempts, successes, items, errors, duration)
-7. duplicate pages/items never corrupt dataset or counts
-8. TikTok-shaped payloads (`cid`/`cursor`/`has_more`, incl. transient empty page)
+`tests/test_acquisition_runtime.py` — 9 deterministic tests (stdlib, no browser):
+1. actor can start a run → dataset + atomic (tmp+replace) checkpoint written,
+   restorable on resume
+2. resume continues from cursor with zero duplicates
+3. retry state survives in checkpoint (incl. pending-retry round-trip)
+4. termination reason + outcome preserved (auth-block, stall, cap, retry-budget)
+5. metrics recorded (attempts, successes, items, errors, duration)
+6. duplicate pages/items never corrupt dataset or counts
+7. TikTok-shaped payloads (`cid`/`cursor`/`has_more`, incl. transient empty page)
    run on the runtime past the historical 198-comment boundary
-9. a second fake provider runs through the *same runtime instance* unmodified
+8. a second fake provider runs through the *same runtime instance* unmodified
+9. resuming an ALREADY-COMPLETED checkpoint: provider not called, dataset
+   untouched, termination reason preserved, `items_seen` equals the persisted
+   unique record count
 
 ## E. Migration of TikTok onto the runtime
 
@@ -111,8 +115,8 @@ Key engine invariants:
 tests/test_tiktok_pagination.py      11 passed, 0 failed
 tests/test_acquisition_hardening.py  11 passed, 0 failed
 tests/run_dedup_quality_tests.py      8 passed, 0 failed  (exit 0)
-tests/test_self_improvement.py        8 passed, 0 failed
-tests/test_acquisition_runtime.py     8 passed, 0 failed
+tests/test_self_improvement.py       11 passed, 0 failed
+tests/test_acquisition_runtime.py     9 passed, 0 failed
 python -m py_compile (all runtime/tiktok/collector/test files)  OK
 ```
 
