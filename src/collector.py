@@ -636,6 +636,7 @@ async def _capture_pass(
             pg_cursor = pg.get("cursor", 0)
             pg_has_more = pg.get("has_more", 0)
             route_dups = 0
+            unique_before = len(seen_ids)
             for api_comment in comments_batch:
                 cid = api_comment.get("cid", "")
                 if cid:
@@ -658,17 +659,21 @@ async def _capture_pass(
                 new_batch_dicts.append(r.to_dict())
                 cdp_added += 1
 
+            unique_after = len(seen_ids)
             pagination_state.record_diagnostic(
                 request_url_pattern=pg_url[:150],
-                cursor=pg_cursor,
+                current_cursor=pg_cursor,
                 response_status=pg_status,
                 response_item_count=len(comments_batch),
                 has_more=bool(pg_has_more),
                 next_cursor=pg_cursor,
-                total_unique_comments=len(seen_ids),
+                unique_before=unique_before,
+                unique_after=unique_after,
+                total_unique_comments=unique_after,
                 retry_count=pagination_state.retry_count,
                 termination_reason=pagination_state.termination_reason,
                 source="route",
+                page_index=pagination_state.page_index,
                 extra={"is_reply": pg.get("is_reply", False), "duplicates": route_dups, "status_msg": pg.get("status_msg", "")},
             )
 
@@ -677,6 +682,7 @@ async def _capture_pass(
         api_duplicates = 0
         if pagination_state.has_more and len(all_raw) < max_comments:
             cur_sent = pagination_state.cursor
+            unique_before = len(seen_ids)
             pg = await fetch_comments_api(page, video_id, cur_sent) or {}
             pg_url = pg.get("url") or f"api/comment/list/?aweme_id={video_id}&cursor={cur_sent}"
             pg_status = pg.get("status_code", 200 if not pg.get("error") else "err")
@@ -687,15 +693,18 @@ async def _capture_pass(
                 print(f"[api] {err_type} (retry {pagination_state.retry_count}/{pagination_state.max_retries}): {pg['error'][:80]}")
                 pagination_state.record_diagnostic(
                     request_url_pattern=pg_url[:150],
-                    cursor=cur_sent,
+                    current_cursor=cur_sent,
                     response_status=pg_status,
                     response_item_count=0,
                     has_more=pagination_state.has_more,
                     next_cursor=None,
-                    total_unique_comments=len(seen_ids),
+                    unique_before=unique_before,
+                    unique_after=unique_before,
+                    total_unique_comments=unique_before,
                     retry_count=pagination_state.retry_count,
                     termination_reason=pagination_state.termination_reason,
                     source="api",
+                    page_index=pagination_state.page_index,
                     extra={"error": pg.get("error"), "error_type": err_type},
                 )
             else:
@@ -717,17 +726,21 @@ async def _capture_pass(
                     has_more=pg.get("has_more"),
                     deduplicated=api_duplicates,
                 )
+                unique_after = len(seen_ids)
                 pagination_state.record_diagnostic(
                     request_url_pattern=pg_url[:150],
-                    cursor=cur_sent,
+                    current_cursor=cur_sent,
                     response_status=pg_status,
                     response_item_count=len(comments),
                     has_more=bool(pg.get("has_more")),
                     next_cursor=pg.get("cursor"),
-                    total_unique_comments=len(seen_ids),
+                    unique_before=unique_before,
+                    unique_after=unique_after,
+                    total_unique_comments=unique_after,
                     retry_count=pagination_state.retry_count,
                     termination_reason=pagination_state.termination_reason,
                     source="api",
+                    page_index=pagination_state.page_index,
                     extra={"duplicates": api_duplicates, "status_msg": pg.get("status_msg", "")},
                 )
 

@@ -82,16 +82,19 @@ class AcquisitionMetrics:
 class PaginationDiagnostic:
     """Structured diagnostic captured for every pagination attempt."""
     attempt_index: int
-    request_url_pattern: str
-    cursor: Union[int, str, None]
+    page_index: int
+    current_cursor: Union[int, str, None]
+    next_cursor: Union[int, str, None]
     response_status: Union[int, str]
     response_item_count: int
     has_more: Optional[bool]
-    next_cursor: Union[int, str, None]
+    unique_before: int
+    unique_after: int
     total_unique_comments: int
     retry_count: int
     termination_reason: Optional[str]
     source: str = "api"  # "api", "route", "dom"
+    request_url_pattern: str = ""
     timestamp: str = field(default_factory=_now)
     extra: dict = field(default_factory=dict)
 
@@ -258,37 +261,44 @@ class PaginationState:
     def record_diagnostic(
         self,
         request_url_pattern: str,
-        cursor: Union[int, str, None],
+        current_cursor: Union[int, str, None],
         response_status: Union[int, str],
         response_item_count: int,
         has_more: Optional[bool],
         next_cursor: Union[int, str, None],
+        unique_before: int,
+        unique_after: int,
         total_unique_comments: int,
         retry_count: int,
         termination_reason: Optional[str],
         source: str = "api",
+        page_index: Optional[int] = None,
         extra: Optional[dict] = None,
     ) -> PaginationDiagnostic:
         """Capture structured telemetry for every pagination attempt."""
         diag = PaginationDiagnostic(
             attempt_index=len(self.diagnostics) + 1,
-            request_url_pattern=request_url_pattern,
-            cursor=cursor,
+            page_index=self.page_index if page_index is None else page_index,
+            current_cursor=current_cursor,
+            next_cursor=next_cursor,
             response_status=response_status,
             response_item_count=response_item_count,
             has_more=has_more,
-            next_cursor=next_cursor,
+            unique_before=unique_before,
+            unique_after=unique_after,
             total_unique_comments=total_unique_comments,
             retry_count=retry_count,
             termination_reason=termination_reason,
             source=source,
+            request_url_pattern=request_url_pattern,
             extra=extra or {},
         )
         self.diagnostics.append(diag)
-        print(f"[DIAGNOSTIC] #{diag.attempt_index} src={diag.source} url={diag.request_url_pattern} "
-              f"cur_sent={diag.cursor} status={diag.response_status} items={diag.response_item_count} "
-              f"has_more={diag.has_more} next_cur={diag.next_cursor} total_unique={diag.total_unique_comments} "
-              f"retries={diag.retry_count} term_reason={diag.termination_reason}")
+        print(f"[DIAGNOSTIC] #{diag.attempt_index} page={diag.page_index} src={diag.source} "
+              f"cur_sent={diag.current_cursor} status={diag.response_status} items={diag.response_item_count} "
+              f"has_more={diag.has_more} next_cur={diag.next_cursor} uniq_before={diag.unique_before} "
+              f"uniq_after={diag.unique_after} total_unique={diag.total_unique_comments} "
+              f"retries={diag.retry_count} term_reason={diag.termination_reason} url={diag.request_url_pattern[:80]}")
         return diag
 
     def to_dict(self) -> dict:
