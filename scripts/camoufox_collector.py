@@ -15,7 +15,7 @@ from pathlib import Path
 from camoufox.async_api import AsyncCamoufox
 
 sys.path.insert(0, str(Path(__file__).parent))
-from src.tiktok_schema import RawComment, Author, raw_from_dom, write_jsonl, COLLECTOR_VERSION  # noqa: F401  (re-exported for downstream callers)
+from src.tiktok_schema import raw_from_dom, write_jsonl  # noqa: F401  (re-exported for downstream callers)
 
 PROFILE_DIR = Path.home() / ".tiktok-linkedin" / "chrome-profile"
 COOKIE_FILE = Path.home() / ".tiktok-linkedin" / "tiktok-cookies.json"

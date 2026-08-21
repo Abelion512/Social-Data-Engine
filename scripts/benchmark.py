@@ -155,12 +155,9 @@ def _compare_versions() -> None:
 
 
 # ── Live run (butuh browser) ──────────────────────────────────────────────────
-async def _live_one(url: str, max_comments: int, max_scrolls: int) -> RunMetrics:
-    from src.collector import collect_video  # import lazy → tetap bisa import di luar
 async def _live_one(url: str, max_comments: int, max_scrolls: int,
                     force_camoufox: bool = False) -> RunMetrics:
     from src.collector import collect_video  # import lazy → tetap bisa import di luar
-    from src.browser_selector import BrowserSession  # noqa: F401 (lazy ref; session managed by collect_video)
 
     video_id = url.rstrip("/").rsplit("/", 1)[-1]
     t0 = time.time()
@@ -296,8 +293,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--urls", nargs="*", help="daftar URL video (live run)")
     ap.add_argument("--urls-file", help="file teks URL per baris")
-    ap.add_argument("--max-comments", type=int, default=300)
-    ap.add_argument("--max-scrolls", type=int, default=60)
+    ap.add_argument("--max-comments", type=int, default=2000, help="cap komentar (termasuk nested reply); 2000 = skala penuh")
+    ap.add_argument("--max-scrolls", type=int, default=200, help="iterasi scroll / API page fetch (50 cmt/page default)")
     ap.add_argument("--from-manifests", type=str,
                     help="agregasi ulang dari direktory manifest improve (tanpa scrape)")
     ap.add_argument("--dry-run", action="store_true", help="mode sample (tidak butuh browser)")

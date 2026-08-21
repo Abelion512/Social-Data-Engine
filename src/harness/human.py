@@ -74,6 +74,47 @@ async def human_move_mouse(page, x: float, y: float, jitter: float = 8.0,
         await ahuman_delay(0.0, 0.06)
 
 
+async def human_click(page, target, button: str = "left") -> bool:
+    """Klik manusiawi anti-bot (mark-agent / browser-use style).
+
+    Bukan `page.click()` sertakan (polos, bisa dideteksi bot). Alihkan:
+      1. resolve elemen ke bounding box (CSS selector string ATAU Playwright Locator)
+      2. `human_move_mouse` — trajekori jittered ke pusat elemen
+      3. klik di **offset acak** kecil (±3.5px) — seolah manusia
+    Dipakai: reply-expand, slider captcha, sampai interaksi UI apa saja.
+    Return True bila berhasil klik.
+    """
+    try:
+        if isinstance(target, str):
+            loc = page.locator(target)
+            if await loc.count() == 0:
+                return False
+            box = await loc.first.bounding_box()
+        else:
+            # Playwright Locator / ElementHandle
+            if hasattr(target, "count"):
+                if await target.count() == 0:
+                    return False
+            elif hasattr(target, "bounding_box"):
+                pass
+            box = await target.bounding_box()
+    except Exception:
+        return False
+    if not box:
+        return False
+    cx = float(box["x"]) + float(box.get("width", 0)) / 2.0
+    cy = float(box["y"]) + float(box.get("height", 0)) / 2.0
+    cx += random.uniform(-3.5, 3.5)   # micro-jitter = bukan klik bot sempurna
+    cy += random.uniform(-3.5, 3.5)
+    await human_move_mouse(page, cx, cy, jitter=6, steps=14)
+    try:
+        await page.mouse.click(cx, cy, button=button)
+        await ahuman_delay(0.05, 0.18)
+        return True
+    except Exception:
+        return False
+
+
 async def human_scroll(page, delta: Optional[int] = None,
                        times: int = 1) -> None:
     """Scroll natural: besar & arah acak, jeda antar-scroll."""

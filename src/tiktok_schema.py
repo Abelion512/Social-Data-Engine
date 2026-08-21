@@ -46,8 +46,10 @@ class RawComment:
     likes: int = 0
     reply_count: int = 0
     create_time: int = 0            # unix timestamp
-    images: List[str] = field(default_factory=list)
-    capture_method: str = ""         # "cdp" | "dom"
+    images: List[str] = field(default_factory=list)        # photo / sticker GIF URLs
+    audio: List[str] = field(default_factory=list)        # voice-comment audio URLs
+    sticker: Optional[str] = None                          # bila comment = sticker murni (GIF src)
+    capture_method: str = ""         # "cdp" | "dom" | "api" | "route"
     captured_at: str = field(default_factory=_now)
     collector_version: str = COLLECTOR_VERSION
 
@@ -94,9 +96,14 @@ def raw_from_api(c: dict, video_ctx: dict, method: str = "cdp", parent_comment_i
             display_name=user.get("nickname", c.get("display_name", "")),
         ),
         text_raw=c.get("text", ""),
-        likes=c.get("digg_count", 0),
-        reply_count=c.get("reply_comment_total", 0),
+        likes=c.get("digg_count", c.get("like_count", 0)),
+        reply_count=c.get("reply_comment_total", c.get("reply_count", 0)),
         create_time=int(c.get("create_time", 0)),
+        # TikTok API comment objek jarang bawa foto/sticker/voice, tapi parse
+        # defensif agar konsisten dengan DOM.
+        images=c.get("images", []) or [],
+        audio=c.get("audio", []) or [],
+        sticker=c.get("sticker") or c.get("sticker_url") or None,
         capture_method=method,
         video_context=video_ctx,
     )
@@ -121,6 +128,8 @@ def raw_from_dom(row: dict, video_ctx: dict) -> RawComment:
         create_time=int(row.get("create_time", 0)),
         capture_method="dom",
         images=row.get("images", []),
+        audio=row.get("audio", []),
+        sticker=row.get("sticker"),
         video_context=video_ctx,
     )
 
