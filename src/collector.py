@@ -805,9 +805,9 @@ async def _capture_pass(
         except Exception:
             pass
 
-        # Write new records incrementally to disk
+        # Write new records incrementally to disk with disk-backed deduplication
         if new_batch_dicts:
-            append_raw_records(str(out_path), new_batch_dicts, seen_ids=set())
+            append_raw_records(str(out_path), new_batch_dicts, seen_ids=None)
 
         # Checkpoint is ONLY persisted AFTER raw writes succeed
         pagination_state.record_items(len(seen_ids))
@@ -1069,7 +1069,7 @@ async def collect_video(
                 remaining_new.append(r.to_dict())
 
         if remaining_new:
-            append_raw_records(str(out_path), remaining_new, seen_ids=set())
+            append_raw_records(str(out_path), remaining_new, seen_ids=None)
 
         # Collection completeness
         captured = len(all_raw)
