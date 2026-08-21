@@ -1,278 +1,340 @@
 # Social Data Engine
 
-[![CI](https://github.com/Israfelse/social-data-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Israfelse/social-data-engine/actions/workflows/ci.yml)
+A research-oriented social data acquisition and processing pipeline for computational social science.
 
-Multi-provider digital behavioral data platform untuk computational social science.
+The project currently stabilizes **TikTok acquisition first**, while the architecture is designed to support additional providers later without changing the canonical downstream data model.
 
-## Visi
+> **Current status:** TikTok comment acquisition is live-verified across multiple pages, including the historical ~198-comment failure boundary. PR #2 is still open and has not been merged yet.
 
-Mengumpulkan, menormalisasi, mendedup, dan mengekspor data sosial — mulai dari TikTok, LinkedIn, YouTube, Reddit — ke format kanonikal yang siap untuk analisis, RAG, dan consumer downstream (MARK Agent, LinkedIn outreach, dll.).
+## What it does
 
-## Arsitektur
-
+```text
+platform
+   ↓
+provider acquisition
+   ↓
+raw events / comments
+   ↓
+normalization
+   ↓
+deduplication
+   ↓
+quality gate
+   ↓
+canonical observations
+   ↓
+export / downstream consumers
 ```
-run.sh                    # Launcher utama (log otomatis → logs/)
-.env                      # Config (gitignored — 9Router API key, model, dsb.)
-├─ NEW architecture (recommended)
+
+The main design goal is **reproducible acquisition**, not merely scraping a page once. Collection state, pagination progress, provenance, deduplication, and failure reasons are explicit so a run can be inspected or resumed.
+
+## Architecture
+
+### Acquisition
+
+TikTok acquisition uses one authoritative pagination state machine.
+
+```text
+TikTok session
+    │
+    ├── proactive API pagination
+    │      cursor=0 → 50 → 100 → 150 → ...
+    │
+    ├── passive Playwright route capture
+    │
+    └── passive DOM capture
+             │
+             ▼
+       acquisition buffer
+             │
+             ▼
+     PaginationState
+       ├─ cursor
+       ├─ page_index
+       ├─ has_more
+       ├─ retry_count
+       ├─ termination_reason
+       └─ diagnostics / metrics
+             │
+             ▼
+      incremental raw write
+             │
+             ▼
+        checkpoint save
+```
+
+The proactive API path is the authoritative pagination mechanism. Route and DOM capture are ingestion/fallback paths and do not independently advance the pagination cursor.
+
+Each successful batch is persisted before the corresponding checkpoint is committed. This makes partial progress durable across interruption and resume.
+
+### Processing pipeline
+
+```text
+collect
+  → raw
+  → normalize
+  → dedup
+  → quality gate
+  → canonicalize
+  → annotate / verify
+  → curated
+  → export
+```
+
+Pipeline stages are designed to be resumable and idempotent where practical.
+
+## Repository layout
+
+```text
 src/
-├── __init__.py
-├── browser_selector.py     # Pilih browser driver (nodriver/camoufox/playwright)
-├── config.py               # LLM/credential config (9Router)
-├── export_tiktok_cookies.py # Export TikTok cookies (Camoufox) → JSON
-├── export/                 # Export sub-package
-│   ├── __init__.py
-│   ├── mark.py             # MARK Agent JSON export (video + corpus)
-│   └── manifest.py         # Pipeline metadata generation
-├── pipeline/               # Pipeline sub-modules (idempotent stages)
-│   ├── __init__.py
-│   ├── dedup.py            # Multi-tier: exact → normalized → near-duplicate (Jaccard bigram)
-│   ├── quality.py          # Heuristic quality scoring + gating
-│   ├── identity.py         # Cross-platform identity resolution
-│   └── stages.py           # Idempotent stage runner with resume
-├── providers/              # Provider adapters (multi-provider)
-│   ├── base.py             # ProviderAdapter interface (provider_name, collect, probe)
-│   └── tiktok.py           # TikTok adapter (Camoufox-based)
-└── schema/                 # Canonical data model (shared across providers)
-    ├── __init__.py
-    ├── canonical.py        # Observation, Entity, Content, Relationship, Annotation, Evidence, Provenance, Confidence
-    └── mapper.py           # TikTok → canonical mapper
-├─ LEGACY (compat — superseded by adapters above)
-src/
-├── collector.py            # Camoufox-based browser collector (legacy compat)
-├── tiktok_schema.py        # Legacy TikTok schema (raw/normalized/enriched/curated v1)
-├── tiktok_linkedin.py      # Legacy entrypoint CLI: chain penuh TikTok → LinkedIn
-├── linkedin_consumer.py    # Consumer LinkedIn (baca curated → match/connect)
-├── pipeline.py             # Legacy pipeline: normalize → dedup → enrich → quality → manifest
-└── mark_export.py          # Legacy MARK export (moved to src/export/mark.py)
-├─ Utilitas / probe (opsional)
+├── collector.py              # TikTok acquisition engine
+├── tiktok_schema.py          # Raw TikTok schema + pagination/checkpoint state
+├── providers/
+│   ├── base.py               # Provider interfaces
+│   └── tiktok.py              # TikTok provider adapter
+├── schema/
+│   ├── canonical.py          # Canonical observation model
+│   └── mapper.py              # Provider → canonical mapping
+├── pipeline/
+│   ├── dedup.py              # Exact / normalized / near-duplicate dedup
+│   ├── quality.py             # Quality scoring and gating
+│   ├── identity.py            # Cross-platform identity resolution
+│   ├── stages.py              # Resumable stage runner
+│   └── improve.py             # Deterministic self-improvement loop
+├── export/
+│   ├── mark.py                # MARK Agent export
+│   └── manifest.py            # Dataset / pipeline manifest generation
+├── harness/                   # Agent / browser tooling
+├── config.py                  # Runtime configuration
+└── browser_selector.py        # Browser backend selection
+
 scripts/
-├── export_tiktok_cookies_nodriver.py  # Export cookies via nodriver (alt)
-├── camoufox_cycle.py       # Cycle Camoufox profile
-├── camoufox_collector.py   # Camoufox-based data collector
-├── probe_camoufox.py       # Probe Camoufox setup
-├── probe_playwright.py     # Probe Playwright setup
-└── vision_collector.py     # Vision collection + LLM analysis
-├─ Tests
+├── test_live.sh              # Live verification entry point
+├── benchmark.py              # Benchmark utilities
+├── trace_comment.py          # Acquisition diagnostics
+└── ...                       # Browser / environment probes
+
 tests/
-├── test_dedup.py            # Dedup unit tests
-├── test_pipeline.py         # Pipeline unit tests
-└── run_dedup_quality_tests.py  # Self-contained runner (8 check)
-├─ Output (gitignored)
-data/                       # output pipeline (raw/normalized/dedup/curated/exports)
-state/                      # job checkpoint + hasil LinkedIn (CSV)
-logs/                       # pipeline_*.log archive
-├─ Docs
-docs/                       # Design: chatgpt-response.md, IMPLEMENTATION.md, GOAL-EVIDENCE.md, VERIFICATION.md
-└─ Memory
-.remember/                  # Agent session memory (dipertahankan)
+├── test_tiktok_pagination.py # Pagination / checkpoint invariants
+├── test_acquisition_hardening.py
+├── test_dedup.py
+├── test_self_improvement.py
+└── run_dedup_quality_tests.py
+
+data/                         # Runtime / sample datasets
+state/                         # Local job checkpoints
+logs/                          # Runtime logs
+docs/                          # Design, verification and versioning docs
 ```
 
-## Pipeline
+`src/pipeline.py` and several older entry points remain for compatibility with the previous TikTok pipeline. New development should use the provider/canonical pipeline interfaces where available.
 
-```
-collect → raw → normalize → dedup → quality gate → annotation → verification → curated → export
-```
+## Canonical data model
 
-Setiap stage idempotent — cek manifest existence + record count sebelum jalan.
-Lihat `docs/IMPLEMENTATION.md` (mapping 16-poin → modul) dan
-`docs/VERIFICATION.md` (cross-check kode nyata vs klaim) untuk detail.
+The canonical layer is defined in `src/schema/canonical.py` and separates observed data from derived interpretation.
 
-## Canonical Data Model
-
-Di `src/schema/canonical.py`, lima belas entitas inti (`chatgpt-response.md §Core data model`):
-
-| Entitas | Peran |
+| Entity | Purpose |
 |---|---|
-| `Observation` | Unit data satuan (comment/reply) — `observation_id`, `source`, `content`, `provenance`, `confidence` |
-| `Content` | `text_raw` + `text_normalized` — tidak pernah destructively clean |
-| `Entity` | Identitas lintas-platform (`provider_ids`, `display_name`) |
-| `Relationship` | Ikatan antar-entitas (reply, mention, co-occurrence) |
-| `Annotation` | Catatan LLM (label, skor) — dipisahkan dari observed data |
-| `Evidence` | Jejak fakta yang mendukung sebuah klaim/annotasi |
-| `Provenance` | `collector_version`, `pipeline_version`, `captured_at`, `processed_at`, `model` |
-| `Confidence` | Nilai + metode + evidence untuk setiap peradilan/identity match |
+| `Observation` | One social observation such as a comment or reply |
+| `Content` | Raw and normalized text without destructive replacement |
+| `Entity` | Author or other identifiable entity |
+| `Relationship` | Reply, mention, co-occurrence, and similar links |
+| `Annotation` | Derived labels or model output, kept separate from observed data |
+| `Evidence` | Evidence supporting an annotation or inference |
+| `Provenance` | Collector, pipeline, timestamp, model and source metadata |
+| `Confidence` | Confidence value, method and supporting evidence |
 
-## Design Docs
+The separation matters for later research and model-training workflows: raw observations should remain recoverable even when downstream annotation logic changes.
 
-| Dokumen | Isi |
-|---|---|
-| `docs/chatgpt-response.md` | Design brief — visi Social Data Engine, arsitektur, batasan etika |
-| `docs/IMPLEMENTATION.md` | Mapping 16-poin review → modul + status + bukti live |
-| `docs/GOAL-EVIDENCE.md` | Verifikasi 3 elemen goal secara objektif |
-| `docs/VERIFICATION.md` | Cross-check kode vs dokumen (build/test matrix + bug fix record) |
-| `docs/SELF-IMPROVEMENT.md` | Auto/Recursive Self-Improvement architecture (feedback loop) |
-| `docs/VERSIONING.md` | Semantik MVP v1 (TikTok+LinkedIn, kriteria stabil, pre-release checklist) |
-| `docs/superpowers/plans/2026-08-19-social-data-engine.md` | Rencana evolusi multi-provider |
-| `agents.md` | Agent operating rules + live-test-before-merge (MVP v1 stabilize gate) |
+## Pagination, checkpoints and failure handling
+
+The acquisition engine treats these as first-class states rather than incidental exceptions:
+
+- cursor advancement
+- repeated cursor / pagination stall
+- transient empty pages
+- fetch failures and retries
+- parse failures
+- authentication / anti-bot blocking
+- maximum collection caps
+- normal `has_more=false` completion
+
+Each run records structured acquisition metrics and diagnostics. A checkpoint contains enough state to resume from the last durable cursor rather than restarting the entire collection.
+
+## Live verification
+
+The historical failure mode was a stall around **198 comments**. The current implementation changed the proactive TikTok request from an invalid oversized batch to the observed web API batch size of **50 comments per request** and made pagination state explicit.
+
+Live verification on the historical target demonstrated:
+
+```text
+cursor=150 → next=200   unique: 146 → 196
+cursor=200 → next=250   unique: 196 → 245
+cursor=250 → next=251   unique: 245 → 246, has_more=false
+```
+
+Additional live verification reported:
+
+- TikTok photo post: **71 / 71 comments** collected
+- TikTok video target: **246 / 246 comments** collected
+- Resume test: checkpoint at cursor `150`, then resumed to completion without duplicate IDs
+
+These are live verification results from the development environment. CI currently focuses on deterministic repository checks and does not require authenticated TikTok access.
 
 ## Testing
 
+### Deterministic tests
+
 ```bash
 source .venv/bin/activate
 
-# Self-contained runner (8 check, tidak butuh pytest)
+python -m pytest tests/test_tiktok_pagination.py -v
+python -m pytest tests/test_acquisition_hardening.py -v
+python -m pytest tests/test_dedup.py -v
+python -m pytest tests/test_self_improvement.py -v
 python tests/run_dedup_quality_tests.py
-
-# Pytest (jika terpasang)
-python -m pytest tests/ -v
 ```
+
+Current local verification reported:
+
+```text
+test_tiktok_pagination.py       11 passed
+test_acquisition_hardening.py   11 passed
+run_dedup_quality_tests.py      41 passed
+test_self_improvement.py         8 passed
+```
+
+### Live test
+
+Live collection requires an authenticated browser session and should be treated separately from deterministic CI tests.
+
+```bash
+bash scripts/test_live.sh
+```
+
+For debugging, use the acquisition trace tooling and inspect `logs/`, `state/`, and the generated `data/raw/` records.
 
 ## Usage
 
-```bash
-# Aktifkan virtualenv
-source .venv/bin/activate
+### Provider API
 
-# Launcher (log otomatis masuk logs/)
-bash run.sh                                  # login mode
-bash run.sh "https://www.tiktok.com/@user/video/123" --max 100
-bash run.sh "https://..." --connect          # auto-connect (butuh approval)
-
-# Koleksi TikTok satu video (via new adapter)
-python -c "
+```python
 import asyncio
 from src.providers.tiktok import TikTokAdapter
+
 adapter = TikTokAdapter()
-observations = asyncio.run(adapter.collect('https://www.tiktok.com/@user/video/123', max=100))
-"
-
-# Pipeline penuh raw → curated (legacy)
-python src/pipeline.py --video 123
-
-# Export ke MARK Agent
-python -c "
-from src.export.mark import export_video
-export_video('123')
-"
-
-# Build manifest
-python -c "
-from pathlib import Path
-from src.export.manifest import build_manifest, write_manifest
-m = build_manifest(Path('.'))
-write_manifest(Path('.'), m)
-"
-
-# Probe / utilitas
-python scripts/probe_camoufox.py
-python scripts/probe_playwright.py
+observations = asyncio.run(
+    adapter.collect(
+        "https://www.tiktok.com/@user/video/123",
+        max=500,
+    )
+)
 ```
 
-## Authentication (Cookie-Based — never password-based)
+### CLI / legacy compatibility
 
-**Philosophy:** platform ini **tidak pernah login by password**. Semua otentikasi
-bergantung pada **cookies session yang di-capture via browser user sendiri** (CDP),
-dengan scope & manajemen yang transparan & safety.
+```bash
+source .venv/bin/activate
 
-Alur:
+bash run.sh "https://www.tiktok.com/@user/video/123" --max 100
+python src/pipeline.py --video 123
+```
 
-1. **Login manual satu kali** — jalankan `bash run.sh` (mode login). Browser
-   (Camoufox/nodriver/Playwright) membuka halaman login TikTok/LinkedIn; **user yang
-   login sendiri**. Session tersimpan persisten di Chrome profile
-   (`~/.tiktok-linkedin/chrome-profile/`).
-2. **Reuse cookies** — run berikutnya otomatis memakai profile yang sama, sehingga
-   cookies session dipakai kembali. Password tidak pernah disentuh.
-3. **Export cookies** (opsional, untuk Electron/Mark session) —
-   `python src/export_tiktok_cookies.py` (Camoufox, rekomendasi) atau
-   `python scripts/export_tiktok_cookies_nodriver.py` (nodriver alt). Output JSON
-   hanya berisi field yang diperlukan:
-   `name, value, domain, path, secure, httpOnly, sameSite, expirationDate`.
+### Export
 
-Transparansi / safety:
+```python
+from src.export.mark import export_video
+export_video("123")
+```
 
-- `LINKEDIN_USERNAME` / `LINKEDIN_PASSWORD` **tidak ada di kode** dan **tidak
-  di-load** di `run.sh` (dihapus sebagai relik yang berisiko kebocoran).
-- Hanya `NINEROUTER_API_KEY` yang dimuat dari `~/.hermes/.env` (9Router proxy key,
-  bukan kredensial platform).
-- Cookie hanya dipakai untuk request yang sama ke platform (TikTok/LinkedIn) yang
-  dibutuhkan untuk koleksi; tidak dikirim ke luar.
-- Scope minimal: collector hanya membaca halaman yang diminta, tidak menyurvei
-  akun lain, tidak mengubah password/akun.
+## Authentication
+
+The project uses **user-provided browser sessions / cookies** rather than password automation.
+
+Typical flow:
+
+```text
+manual browser login
+      ↓
+persistent browser profile
+      ↓
+reused session cookies
+      ↓
+authenticated collection
+```
+
+Credentials and session state are kept outside the repository. Never commit cookies, API keys, passwords, or browser profiles.
 
 ## Auto / Recursive Self-Improvement
 
-Pipeline **memperbaiki dirinya sendiri** (bukan model) — arsitektur *feedback loop*
-yang observasi hasil collect, detect regresi/stall, plan aksi remediatif
-**deterministik**, apply, re-run, dan evaluasi — merekrut sampai stabil atau budget
-iterasi habis. Lihat `docs/SELF-IMPROVEMENT.md` + `src/pipeline/improve.py`.
+`src/pipeline/improve.py` contains a deterministic feedback loop for pipeline remediation.
 
-```
-observe → plan(deteministic) → act(collector overrides) → re-collect → evaluate
-            │                                                            │
-            └─ iter ≤ max_iter ──> stable? ──ya──► done                  │
-                                                        ──tidak─► loop
+```text
+observe → plan → act → re-collect → evaluate
+   ↑                              │
+   └────────── iteration ─────────┘
 ```
 
-Stabil = coverage ≥ 95 %, semua reply/caption/photo/sticker ter-normalize,
-quality gate lolal (lihat `docs/VERSIONING.md` §Kriteria stabil). Setiap iterasi
-dicatat ke `data/manifests/<video_id>.improve.jsonl` (audit trail).
+This is an architectural control loop, not a trained model. It uses explicit metrics and bounded iterations to react to collection problems without silently mutating arbitrary behavior.
 
-```python
-from src.pipeline.improve import SelfHealingPipeline, ImprovementPlanner
-# runner.run(video_id, url) — observe → plan → act → re-collect → evaluate
-```
+See `docs/SELF-IMPROVEMENT.md` for the current design.
 
-## Model (9Router)
+## Deduplication
 
-Config via UI (Configuration page). No `.env`, no `config.yaml`.
-- Primary: 9Router proxy (`http://localhost:20128`)
-- Fallback: LM Studio (`http://localhost:1234`)
-- Model: `abelink` (DeepSeek V4 Flash + Nemotron + Mimo 2.5 composite)
+The pipeline supports multiple deduplication tiers:
 
-## Schema Versioning
+1. exact identity / exact text
+2. normalized text comparison
+3. near-duplicate detection using character bigram similarity
 
-- `raw.v1` — apa yang dikumpulkan (preserved, non-destructive)
-- `normalized.v1` — text_normalized + context snapshot
-- `enriched.v1` — quality score + identity
-- `curated.v1` — lolos quality gate
+Deduplication is applied without deleting the original raw records, preserving traceability.
 
-`text_raw` + `text_normalized` always coexist — tidak ada destructive cleaning.
+## Provenance and versioning
 
-## Multi-Tier Dedup
+The data model carries provenance so a downstream result can be traced back to the collection and processing versions that produced it.
 
-1. **Exact** — hash text mentah
-2. **Normalized** — lowercase + unicode/whitespace fold
-3. **Near-duplicate** — Jaccard similarity pada karakter bigram (threshold 0.85)
+See:
 
-## Collection completeness
+- `docs/IMPLEMENTATION.md`
+- `docs/VERIFICATION.md`
+- `docs/VERSIONING.md`
+- `docs/SELF-IMPROVEMENT.md`
 
-Collector melaporkan `reported` vs `captured` + `coverage` + `status`
-(complete/partial/unknown). Pipeline tidak mempromosikan partial data tanpa tanda.
+## CI
 
-## Limitasi yang diketahui
+The repository CI checks:
 
-- **Camoufox + cookie + reply expansion** = jalur terbaik
-- CDP body-grab gagal pada body yang di-evict
-- API comment butuh signature (msToken/X-Bogus)
-
-## CI / Versioning Automation
-
-CI jalan otomatis di setiap push / PR (`.github/workflows/ci.yml`):
-
-| Gate | Cara verifikasi |
+| Gate | Verification |
 |---|---|
-| build | `python -m py_compile` semua `.py` |
-| import | cross-check 6 module + semua simbol |
-| shell | `bash -n run.sh` **dan** `zsh -n run.sh` |
-| tests | `run_dedup_quality_tests.py` (8) + `test_self_improvement.py` (11) |
-| security | zero `LINKEDIN_PASSWORD`/`USERNAME` di kode |
-| version | `.github/workflows/versioning.yml` – tag `v*` semver + scope policy |
+| Compile | Python bytecode compilation |
+| Import | Module / symbol compatibility checks |
+| Shell | Bash + Zsh syntax |
+| Tests | Deterministic pipeline test suites |
+| Security | Credential-name / secret hygiene checks |
+| Versioning | Semver and provider-scope rules |
 
-**Versioning policy** (`docs/VERSIONING.md` + ponytail ladder):
-* scope MVP v1 = **TikTok + LinkedIn**; platform baru ditambah *setelah* stabil
-* semver; tag `v1.0.0` merepresentasikan "TikTok+LinkedIn stable"
-* CI menerima *reject* otomatis jika provider baru ditambah sebelum v1.0 stabil
+Authenticated live TikTok tests are intentionally not required by CI because they depend on external browser state and platform conditions.
 
-```bash
-source .venv/bin/activate
-python tests/run_dedup_quality_tests.py
-python tests/test_self_improvement.py
-bash -n run.sh && zsh -n run.sh          # cross-shell syntax
+## Roadmap
 
-# versioning — dry-run dulu, lalu bump
-python scripts/version_bump.py --bump minor                  # preview
-git push && gh release create v$(python -c 'import importlib.util as u; s=u.spec_from_file_location("v","scripts/version_bump.py"); m=u.module_from_spec(s); s.loader.exec_module(m); print(".".join(map(str,m._read_current())))') --generate-notes
-```
+### Current
+
+- [x] TikTok comment acquisition
+- [x] Cursor-based pagination
+- [x] Durable checkpoints and resume
+- [x] Incremental raw persistence
+- [x] Multi-tier deduplication
+- [x] Canonical schema
+- [x] Deterministic acquisition hardening tests
+- [x] Live validation beyond the historical ~198-comment boundary
+
+### Next
+
+- [ ] Strengthen nested reply collection and thread completeness
+- [ ] Add richer dataset manifests and reproducibility metadata
+- [ ] Improve provider contract tests
+- [ ] Stabilize the canonical pipeline boundary before adding more providers
+- [ ] Add additional social platforms only after the MVP acquisition layer is stable
 
 ## License
 
