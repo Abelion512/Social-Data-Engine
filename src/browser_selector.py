@@ -303,10 +303,15 @@ class BrowserSession:
             self.is_camoufox = True
             return True
 
-        # Step 1: Detect running browsers via CDP
-        detected = await _detect_browsers_async()
+        # Step 1: Scan CDP browsers + cek login TikTok tiap browser.
+        # Act-as-human / anti-bot: prioritaskan browser user yang SUDAH login
+        # (fingerprint + profil asli). Kita ATTACH (bukan launch) sehingga
+        # memakai session/cookie user yang ada — itu keunggulan anti-detect
+        # dibanding camoufox (profil "baku").
+        print("[browser] Scanning CDP browsers & login status...")
+        scan = await _scan_with_login()
 
-        if not detected:
+        if not scan:
             print("[browser] Tidak ada browser CDP yang terdeteksi.")
             print("[browser] 💡 Untuk pakai browser user, start dengan CDP flag:")
             print("[browser]    Chrome:  google-chrome --remote-debugging-port=9222 --remote-allow-origins=*")
@@ -319,42 +324,50 @@ class BrowserSession:
             self.is_camoufox = True
             return True
 
-        # Step 2: 1 browser → auto-connect
-        if len(detected) == 1:
-            b = detected[0]
-            print(f"[browser] Terdeteksi 1 browser: {b.title}")
-            browser, ctx, page = await _connect_cdp(b)
-            if browser:
-                self.browser = browser
-                self.page = page
-                self.is_cdp = True
-                return True
-            # CDP gagal → fallback Camoufox
-            print("[browser] CDP gagal → fallback Camoufox")
+        # chromium-family browsers yang sudah login TikTok
+        logged_in = [s for s in scan if s["logged_in"] and _cdp_browser_type(s["browser"])]
+        # chromium-family yang belum login (kandidat untuk dimintai login)
+        user_browsers = [s for s in scan if not s["logged_in"] and _cdp_browser_type(s["browser"])]
+
+        if logged_in:
+            print(f"[browser] ✅ {len(logged_in)} browser sudah login TikTok.")
+            chosen = _choose_browser_entry(logged_in, prefer_logged_in=True)
+            if chosen is not None:
+                browser, ctx, page = await _connect_cdp(chosen["browser"])
+                if browser:
+                    self.browser = browser
+                    self.page = page
+                    self.is_cdp = True
+                    return True
+        else:
+            # Belum ada yang login → minta user pilih browser, lalu login dulu.
+            print("[browser] Belum ada browser yang login TikTok.")
+            candidates = user_browsers or scan  # paksa pakai chromium bila ada
+            if any(_cdp_browser_type(s["browser"]) for s in candidates):
+                candidates = [s for s in candidates if _cdp_browser_type(s["browser"])]
+            pick = _choose_browser_entry(candidates, force=True)
+            if pick is not None:
+                ok = await _prompt_user_login(pick["browser"])
+                if ok:
+                    browser, ctx, page = await _connect_cdp(pick["browser"])
+                    if browser:
+                        self.browser = browser
+                        self.page = page
+                        self.is_cdp = True
+                        return True
+            print("[browser] Login gagal / tidak ada browser user yang dipilih.")
+
+        # CDP gagal atau tidak ada browser user login → fallback Camoufox
+        print("[browser] 🦊 Fallback ke Camoufox (anti-detect)...")
+        try:
             self.browser, self._cm, self.page = await _open_camoufox()
+            if self.page is None:
+                return False
             self.is_camoufox = True
             return True
-
-        # Step 3: Multiple browsers → tanya user
-        loop = asyncio.get_event_loop()
-        chosen = await loop.run_in_executor(None, _promt_user_browser, detected)
-        if chosen is None:
-            self.browser, self._cm, self.page = await _open_camoufox()
-            self.is_camoufox = True
-            return True
-
-        browser, ctx, page = await _connect_cdp(chosen)
-        if browser:
-            self.browser = browser
-            self.page = page
-            self.is_cdp = True
-            return True
-
-        # CDP gagal → fallback Camoufox
-        print("[browser] CDP gagal → fallback Camoufox")
-        self.browser, self._cm, self.page = await _open_camoufox()
-        self.is_camoufox = True
-        return True
+        except Exception as e:
+            print(f"[browser] ❌ Camoufox fallback gagal: {e}")
+            return False
 
     async def close(self):
         """Cleanup browser session."""
@@ -371,6 +384,195 @@ class BrowserSession:
         return f"<BrowserSession mode={mode}>"
 
 
+# ── TikTok login awareness (CDP) ──────────────────────────────────────────────
+TIKTOK_URL = "https://www.tiktok.com"
+# Cookie names TikTok pakai untuk session/identity. Jika ada salah satu di
+# context user browser → dianggap sudah login.
+_TIKTOK_SESSION_COOKIE_NAMES = {
+    "sessionid", "sessionid_v2", "ttwid", "ttwid_v2", "ttwid_4",
+    "uid", "sid_tt", "sidr", "s_vid",
+}
+
+
+def _cdp_browser_type(detected: "DetectedBrowser") -> str:
+    """Map detected browser_type → playwright browser group for CDP connect.
+
+    CDP connect_over_cbp() hanya langsung work di Chromium-family
+    (Chrome/Brave/Edge/Chromium). Firefox CDP pakai protocol berbeda dan
+    tidak kompatibel dengan chromium.connect_over_cdp — untuk itu kita
+    me-lewati CDP (return '') dan biarkan fallback ke Camoufox.
+    """
+    if detected.browser_type in ("chrome", "brave", "edge", "chromium"):
+        return "chromium"
+    return ""
+
+
+async def _read_tiktok_session(detected: "DetectedBrowser", timeout: float = 10.0) -> bool:
+    """Attach ke user browser via CDP, baca cookie context UNTUK login TikTok.
+
+    Penting (act-as-human & anti-detect):
+      - **attach** via connect_over_cdp (bukan launch baru) → memakai profil/cookie
+        user yang asli (fingerprint natural, history, login state). Itu justru
+        *anti bot detection* terbaik: kita jadi "user biasa" yang browser-nya udah login.
+      - **disconnect** (bukan close) → browser user tetap hidup, tidak ganggu interaksi user.
+      - JANGAN navigate / klik apa-apa — cukup baca cookie context yang ada.
+
+    Returns True bila ada cookie session TikTok di context pertama.
+    """
+    if async_playwright is None:
+        return False
+    if not _cdp_browser_type(detected):
+        return False  # firefox/unsupported → lewati CDP
+    pw = None
+    browser = None
+    try:
+        pw = await async_playwright().start()
+        browser = await pw.chromium.connect_over_cdp(
+            f"http://127.0.0.1:{detected.port}", timeout=int(timeout * 1000)
+        )
+        contexts = browser.contexts
+        # context user pertama = profil yang sedang dipakai
+        ctx = contexts[0] if contexts else await browser.new_context()
+        try:
+            cookies = await ctx.cookies()
+        except Exception:
+            cookies = []
+        for c in cookies:
+            name = (c.get("name") or "").lower()
+            if any(s in name for s in ("sessionid", "ttwid", "uid", "sid")):
+                return True
+        return False
+    except Exception as e:
+        print(f"[browser] CDP login-check gagal {detected.title}: {str(e)[:80]}")
+        return False
+    finally:
+        # Detach (jangan close!) supaya browser user tetap hidup.
+        if browser is not None:
+            try:
+                await browser.disconnect()
+            except Exception:
+                pass
+        if pw is not None:
+            try:
+                await pw.stop()
+            except Exception:
+                pass
+
+
+async def _scan_with_login() -> list:
+    """Detect CDP browsers + cek login TikTok masing-masing.
+
+    Returns list of dict: {browser, port, type, title, logged_in}.
+    Hanya chromium-family yang dicek login (firefox → dilewati, fallback camoufox).
+    """
+    detected = detect_browsers()
+    out = []
+    for b in detected:
+        li = False
+        if _cdp_browser_type(b):
+            li = await _read_tiktok_session(b)
+        out.append({
+            "browser": b, "port": b.port, "type": b.browser_type,
+            "title": b.title, "logged_in": li,
+        })
+        tag = "✅ logged-in" if li else "🔄 not-logged"
+        print(f"[browser]  [{b.port}] {b.browser_type} — {tag}")
+    return out
+
+
+async def _prompt_user_login(detected: "DetectedBrowser") -> bool:
+    """Human-in-the-loop: minta user login di browser, lalu konfirmasi siap.
+
+    Alur (act-as-human):
+      1. Buka halaman login TikTok di context user (via CDP attach).
+      2. Tunjukkan link login + instruksi.
+      3. User tekan Enter di terminal setelah login selesai.
+      4. Kita cek cookie sessionid kembali → True bila ada.
+    """
+    print("\n" + "=" * 60)
+    print(f"  🔐 Browser terpilih: {detected.title} (port {detected.port})")
+    print("  Silakan login ke TikTok di browser kamu:")
+    print(f"    {TIKTOK_URL}/login")
+    print("  Setelah berhasil login (ada profil/avatar kamu), kembali ke sini")
+    print("  dan tekan ENTER.")
+    print("=" * 60)
+
+    pw = None
+    browser = None
+    try:
+        pw = await async_playwright().start()
+        browser = await pw.chromium.connect_over_cdp(
+            f"http://127.0.0.1:{detected.port}", timeout=15000
+        )
+        contexts = browser.contexts
+        ctx = contexts[0] if contexts else await browser.new_context()
+        try:
+            page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+            await page.goto(f"{TIKTOK_URL}/login", wait_until="domcontentloaded", timeout=15000)
+        except Exception:
+            pass
+        try:
+            input(">>> tekan ENTER setelah login selesai... ")
+        except EOFError:
+            pass
+        # re-check cookie setelah user konfirmasi
+        return await _read_tiktok_session(detected)
+    finally:
+        if browser is not None:
+            try:
+                await browser.disconnect()
+            except Exception:
+                pass
+        if pw is not None:
+            try:
+                await pw.stop()
+            except Exception:
+                pass
+
+
+def _choose_browser_entry(entries: list, force: bool = False,
+                         prefer_logged_in: bool = False) -> Optional[dict]:
+    """Pilih satu entry dari daftar scan (dict dengan key 'browser' + 'logged_in').
+
+      - TTY (manusia) + >1 : tampilkan opsi, minta pilih.
+      - non-TTY (agent)    : auto-pick; `BROWSER_CHOICE` env override.
+      - 1 entry           : langsung pakai.
+      - `force=True`      : selalu tampilkan pilihan walaupun 1 entry (untuk login-prompt).
+    """
+    if not entries:
+        return None
+
+    # env override (nomor 1..N → browser ke-i; 0 → camoufox/None)
+    env_choice = os.environ.get("BROWSER_CHOICE", "").strip()
+    if env_choice.isdigit():
+        idx = int(env_choice)
+        if idx == 0:
+            return None
+        if 1 <= idx <= len(entries):
+            return entries[idx - 1]
+
+    if force or (_is_interactive() and len(entries) > 1):
+        print("\n  🌐 Browser terdeteksi:")
+        icons = {"chrome": "🟢", "brave": "🦁", "edge": "🔵",
+                 "firefox": "🦊", "chromium": "⚪", "unknown": "❓"}
+        for i, e in enumerate(entries, 1):
+            b = e["browser"]
+            icon = icons.get(b.browser_type, "❓")
+            tag = " ✅ logged-in" if e.get("logged_in") else " 🔄 not-logged"
+            print(f"  [{i}] {icon} {b.title} — port {b.port} ({b.browser_type}){tag}")
+        print("  [0] 🦊 Camoufox (anti-detect, tab buka baru)")
+        try:
+            choice = input(f"  Pilih browser (0-{len(entries)}): ").strip()
+            idx = int(choice)
+            if idx == 0:
+                return None
+            if 1 <= idx <= len(entries):
+                return entries[idx - 1]
+        except (ValueError, EOFError, KeyboardInterrupt):
+            print("  ⚠️  Input tidak valid → auto-pick.")
+    # auto-pick (single entry / non-interactive / after-bad-input).
+    # entries sudah diurutkan: yang paling cocok (logged-in / user browser) di depan.
+    return entries[0]
 # ── Quick test ─────────────────────────────────────────────────────────────────
 def _test_detect_sync():
     """Quick test untuk browser detection (sync)."""
@@ -384,6 +586,69 @@ def _test_detect_sync():
         for b in detected:
             icon = icons.get(b.browser_type, "❓")
             print(f"  {icon} [{b.port}] {b.title} ({b.browser_type})")
+
+
+def _is_interactive() -> bool:
+    """Apakah interpreter ini terhubung ke TTY (interaktif manusia)?
+    Agent/CI yang mengarahkan stdin ke non-TTY -> False -> auto-pick."""
+    try:
+        return sys.stdin.isatty()
+    except Exception:
+        return False
+
+
+def _prefer_user_browser(detected: List[DetectedBrowser]) -> Optional[DetectedBrowser]:
+    """Utamakan browser *user* yang sedang berjalan (Chrome/Brave/Edge/Chromium)."""
+    for b in detected:
+        if b.browser_type in ("chrome", "brave", "edge", "chromium"):
+            return b
+    return detected[0] if detected else None
+
+
+def _print_detected(detected: List[DetectedBrowser]) -> None:
+    icons = {"chrome": "🟢", "brave": "🦁", "edge": "🔵",
+             "firefox": "🦊", "chromium": "⚪", "unknown": "❓"}
+    if not detected:
+        print("Tidak ada browser CDP yang terdeteksi. Gunakan Camoufox atau "
+              "start browser dengan --remote-debugging-port=9222")
+        return
+    for b in detected:
+        icon = icons.get(b.browser_type, "❓")
+        print(f"  {icon} [{b.port}] {b.title} ({b.browser_type})")
+
+
+def select_browser(detected: List[DetectedBrowser], interactive: Optional[bool] = None) -> Optional[DetectedBrowser]:
+    """Pemilihan browser: auto-detect dulu, lalu:
+      - **Manusia** (TTY): tampilkan opsi + minta pilih.
+      - **Agent / non-TTY**: auto-pick browser user (atau paksa via env `BROWSER_CHOICE`).
+      - `BROWSER_CHOICE=0` -> paksa Camoufox (fallback anti-detect).
+    Kembalikan DetectedBrowser, atau None -> gunakan Camoufox.
+    """
+    if interactive is None:
+        interactive = _is_interactive()
+
+    env_choice = os.environ.get("BROWSER_CHOICE", "").strip()
+    if env_choice.isdigit():
+        idx = int(env_choice)
+        if idx == 0:
+            return None  # Camoufox
+        if 1 <= idx <= len(detected):
+            return detected[idx - 1]
+
+    if interactive and len(detected) > 1:
+        # manusia interaktif -> tanya pilih
+        return _promt_user_browser(detected)
+
+    # non-interactive (agent) OR single browser -> auto, prioritize user browser
+    return _prefer_user_browser(detected)
+
+
+async def _test_detect():
+    """Async wrapper — `collector.py --detect` imports `_test_detect` (bukan
+    `_test_detect_sync`). Async agar `asyncio.run(_test_detect())` valid."""
+    loop = asyncio.get_event_loop()
+    detected = await loop.run_in_executor(None, detect_browsers)
+    _print_detected(detected)
 
 
 if __name__ == "__main__":

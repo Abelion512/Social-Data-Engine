@@ -46,6 +46,12 @@ if _LEGACY_FILE.exists():
     generate_manifest = _legacy.generate_manifest
     run_video = _legacy.run_video
     _discover_videos = _legacy._discover_videos
+    # Legacy quality/identity helpers (pre-package era) — kept importable so
+    # `from src.pipeline import quality_score, llm_enrich_identities, GATING_THRESHOLD`
+    # still works after the src/pipeline package shadowed src/pipeline.py.
+    quality_score = _legacy.quality_score
+    llm_enrich_identities = _legacy.llm_enrich_identities
+    GATING_THRESHOLD = _legacy.GATING_THRESHOLD
 else:
     # legacy file removed — define fallback so package still imports
     PIPELINE_VERSION = "1.0.0"
@@ -64,6 +70,7 @@ __all__ = [
     "STAGES", "FORCE", "stage_normalize", "stage_dedup",
     "stage_enrich", "stage_quality_gate", "generate_manifest", "run_video",
     "_discover_videos",
+    "quality_score", "llm_enrich_identities", "GATING_THRESHOLD",
     # modular
     "dedup", "quality", "identity", "stages", "improve",
 ]

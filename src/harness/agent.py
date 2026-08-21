@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from src.harness.tools import AgentTool, default_toolkit
+from src.harness.human import apply_stealth, ahuman_delay, resolve_captcha_if_present
 from src.harness.registry import Harness
 
 
@@ -94,6 +95,8 @@ class BrowserAgent:
         tool = tools[tool_name]
         res = await tool.act(self.page, **arg)
         obs = tool.observe(res)
+        # human_act: jeda acak antar-aksi agar tidak kelihatan bot (bukan pola)
+        await ahuman_delay(0.6, 1.5)
         self.trace.append(TraceStep(goal=self.goal, tool=tool_name,
                                    observation=obs, result=res, ts=_now()))
         return res
@@ -107,6 +110,15 @@ class BrowserAgent:
             for t in ["read"]:
                 self._log(f"  ⧖ {t}: skipped (no browser)")
             return self._summary(collected=0)
+
+        # human_act first: stealth fingerprint + captcha pre-check sebelum aksi.
+        try:
+            stealth = await apply_stealth(self.page)
+            self._log(f"  [human] stealth: {stealth}")
+            pre = await resolve_captcha_if_present(self.page, attempts=1)
+            self._log(f"  [human] pre-action captcha: {pre}")
+        except Exception as e:
+            self._log(f"  [human] stealth/captcha pre-check gagal: {e}")
 
         observation = await self.observe()
         self._log(f"  ⊘ observe: {observation}")
@@ -131,6 +143,9 @@ class BrowserAgent:
             from src.browser_selector import BrowserSession
             self.session = BrowserSession()
             ok = await self.session.connect(force_camoufox=self.headless is False)
+            if not ok:
+                self._log("  ✗ browser connect failed")
+                return
             self.page = self.session.page
             self._log(f"  ✓ connected: camoufox={self.session.is_camoufox}")
         except Exception as e:

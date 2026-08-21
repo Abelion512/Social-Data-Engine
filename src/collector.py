@@ -14,7 +14,6 @@ Usage:
 from __future__ import annotations
 import asyncio
 import json
-import os
 import re
 import sys
 import time
@@ -26,15 +25,12 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from src.browser_selector import BrowserSession
-from camoufox.async_api import AsyncCamoufox
-
+from src.harness.human import apply_stealth, resolve_captcha_if_present, ahuman_delay
 from src.tiktok_schema import (
     RawComment,
-    Author,
     raw_from_api,
     raw_from_dom,
     write_jsonl,
-    COLLECTOR_VERSION,
 )
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -424,6 +420,8 @@ async def _capture_pass(page, video_ctx, captured_pages, all_raw,
     STALE_LIMIT = 6
 
     for i in range(max_scrolls):
+        # human_act: jeda acak sebelum setiap scroll (bukan bot yang pola-pola)
+        await ahuman_delay(0.8, 2.2)
         dom_added = 0
         try:
             dom_str = await page.evaluate(DOM_SCRAPE_JS)
@@ -628,6 +626,12 @@ async def collect_video(
         mode = "CDP" if session.is_cdp else "Camoufox"
         print(f"[collector] Browser mode: {mode}")
 
+        # human_act first: stealth fingerprint overrides (defense-in-depth atop
+        # Camoufox's built-in anti-detect). Applied before nav so TikTok's bot
+        # detection never sees a stock headless signature.
+        stealth = await apply_stealth(page)
+        print(f"[human] stealth: {stealth}")
+
         # Setup route intercept (replaces CDP Fetch intercept)
         await _setup_route_intercept(page, captured_pages, route_counters)
 
@@ -643,8 +647,18 @@ async def collect_video(
             except Exception:
                 s = {}
             if s.get("blocked"):
-                print(f"[!] TikTok blocked (login/verify) at {s.get('url', '?')}")
-                return {"error": "blocked", "status": "blocked"}
+                # human_act first: rather than bail on verify/captcha, ATTEMPT to
+                # resolve it (slider drag via vision/mouse, image captcha via
+                # 9Router Gemini vision). Only bail if resolution fails.
+                print(f"[human] TikTok blocked (verify/captcha) at {s.get('url', '?')} — attempting resolution")
+                res = await resolve_captcha_if_present(page, attempts=2)
+                print(f"[human] captcha resolve result: {res}")
+                if res.get("solved"):
+                    print("[human] captcha solved — continuing collection")
+                    await asyncio.sleep(3)
+                    continue
+                print(f"[!] TikTok blocked (login/verify) at {s.get('url', '?')} — captcha tidak terpecahkan")
+                return {"error": "blocked", "status": "blocked", "captcha": res}
             if attempt < 2:
                 await asyncio.sleep(3)
 
@@ -708,7 +722,7 @@ async def collect_video(
                                      parent_comment_id=pg.get("parent_comment_id", ""))
                 all_raw.append(r)
 
-        final_written = write_jsonl(str(out_path), [r.to_dict() for r in all_raw])
+        write_jsonl(str(out_path), [r.to_dict() for r in all_raw])
 
         # Collection completeness
         captured = len(all_raw)

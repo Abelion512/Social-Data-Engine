@@ -62,8 +62,15 @@ load_env() {
     done < "$envfile"
 }
 
-# Source 9Router API key
-load_env "$HOME/.hermes/.env" "NINEROUTER_API_KEY"
+# Source 9Router API key + vision config. load_env only exports whitelisted
+# KEY=VALUE lines (zsh/bash safe) — explicitly skips the multiline SSH-key and
+# other non-credential blobs that break naive `source`.
+load_env "$HOME/.hermes/.env" \
+    "NINEROUTER_API_KEY" \
+    "NINEROUTER_URL" \
+    "MODEL_ID" \
+    "MODEL_VISION_DEFAULT" \
+    "MODEL_VISION_OCR"
 
 # NOTE: LinkedIn / TikTok auth is COOKIE-BASED, never password-based.
 # The user logs in manually once (run.sh, no URL → login mode) into a

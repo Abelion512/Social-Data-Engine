@@ -48,11 +48,14 @@ class TikTokAdapter(AgentProvider):
     def toolkit(self):
         """TikTok-specific tool bindings + reply-thread strategy."""
         from src.harness.tools import default_toolkit, RouteCapture
+        from src.harness.human import CaptchaSolver
         kt = default_toolkit()
         # TikTok: replies under [data-e2e="comment"] threads; route captures
         # /comment/list/reply — parent_comment_id parsed di collector._on_route.
-        # Stateful container (fresh per toolkit) → thread-aware capture.
+        # Stateful container (fresh per toolkit) -> thread-aware capture.
         kt["route.capture"] = RouteCapture(captured_pages=[], counters={"route": 0, "api": 0, "dom": 0})
+        # human_act: captcha resolve tool (slider/image) selectable oleh agent.
+        kt["solve_captcha"] = CaptchaSolver()
         return kt
 
     async def collect(self, url: str, **kwargs) -> List[Observation]:

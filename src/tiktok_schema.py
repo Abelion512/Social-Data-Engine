@@ -17,8 +17,8 @@ from typing import Optional, List
 from datetime import datetime, timezone
 import json
 
-SCHEMA_VERSION = "1.0"
-COLLECTOR_VERSION = "0.4.0"
+SCHEMA_VERSION = "1.1"
+COLLECTOR_VERSION = "1.1.0"
 
 def _now() -> str:
     """ISO-8601 timestamp UTC, konsisten di semua level."""
