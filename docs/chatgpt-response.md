@@ -1,0 +1,132 @@
+# Social Data Engine — Project Direction
+
+> Design brief (12 KB review file) that recast social-data-engine from a single-provider
+> scraper into a multi-provider digital behavioral data platform.
+> See `IMPLEMENTATION.md` for the 16-point mapping → module + status + evidence,
+> and `VERIFICATION.md` for the live code cross-check.
+
+## Identity
+
+* **Repo title:** `Social Data Engine`
+* **Project title:** **Social Data Engine**
+* **Primary direction:** this is no longer a TikTok scraper and not an LLM training project. TikTok is one provider among many.
+* **Goal:** build infrastructure to collect, clean, verify, connect, and transform digital social data into behavioral/social knowledge usable by various consumers.
+* **Origin:** project started as neuroscience/psychology exploration, but the scientific framing is clarified as **digital behavioral data / computational social science**. The data platform is not raw neuroscience data, and psychological inference must not be conflated with observation.
+* **Consumers:** Mark is one consumer. Others include behavioral research, analytics, specialist models, dataset export, social graph, and cross-platform analysis.
+* **Multi-provider:** TikTok, LinkedIn, YouTube, Reddit, and other providers are adapters, not separate projects. Data is converted to a shared canonical schema.
+* **Cross-platform:** data from multiple providers connects via entity resolution and evidence — TikTok ↔ LinkedIn ↔ Mark. Never treat identity match as certainty. Store confidence and provenance.
+* **Social engineering boundary:** do not define this project as a human manipulation tool. Focus on social/behavioral intelligence, computational social science, research, social context, and interaction analysis. Avoid features designed to exploit individual weaknesses or manipulate targets.
+* **Core data model:** `Observation`, `Entity`, `Content`, `Relationship`, `Annotation`, `Evidence`, `Provenance`, `Confidence`.
+* **Data hierarchy:** clearly distinguish `observed data` from `model annotation` and `inference`. Never convert "user wrote X" into "user has psychological condition Y" without research basis.
+* **Pipeline:** `collect → raw → normalize → dedup → context join → quality gate → annotation → verification → curated → knowledge/export`.
+* **Raw data:** do not destructively clean. Preserve `text_raw` and `text_normalized`, provenance, collector version, pipeline version, timestamps, source, IDs, parent IDs, context, and capture method.
+* **Conversation structure:** preserve parent/reply threading. A comment's meaning is derived from its conversation context, not just its text in isolation.
+
+## Architecture
+
+```text
+TikTok / LinkedIn / YouTube / Reddit
+         ↓
+     Collector Adapters
+         ↓
+     Raw Data (immutable)
+         ↓
+     Normalize → Dedup → Context Join
+         ↓
+     Quality Gate
+         ↓
+     Annotation → Verification
+         ↓
+     Curated Social Knowledge
+         ↓
+     Mark RAG / Knowledge
+         ↓
+     Cloud LLM reasoning
+```
+
+Mark should consume useful knowledge, context, and evidence rather than blindly importing raw social data.
+
+## Cross-Platform Identity
+
+Cross-platform connections are a core capability.
+
+Example:
+
+```text
+TikTok identity
+       ↓
+entity resolution
+       ↓
+LinkedIn identity
+       ↓
+shared Entity
+```
+
+Identity matches must include:
+
+* confidence
+* evidence
+* source
+* provenance
+
+Never represent uncertain identity resolution as absolute truth.
+
+## Social Engineering Boundary
+
+The project may support:
+
+* social research
+* behavioral analysis
+* audience research
+* social graph analysis
+* context-aware communication
+* public-information synthesis
+* research-oriented identity resolution
+
+Do not design functionality whose purpose is to identify or exploit personal weaknesses, automate deception, or manipulate individuals.
+
+## YAGNI / Ponytail Principle
+
+Follow this project rule:
+
+Build the smallest architecture that is actually justified.
+
+Do not prematurely add:
+
+* distributed processing
+* custom databases
+* custom vector databases
+* local LLM infrastructure
+* training infrastructure
+* Parquet before corpus size requires it
+* speculative abstractions
+
+Reuse existing infrastructure where possible.
+
+However, do not simplify away:
+
+* validation
+* data-loss protection
+* provenance
+* security
+* privacy safeguards
+* collection completeness
+* test coverage for non-trivial logic
+
+## Success Criteria
+
+The project is successful when collected data produces useful downstream value.
+
+Possible proof points:
+
+1. A behavioral research dataset can be produced reproducibly.
+2. A specialist emotion/social-language model can be trained or evaluated from the resulting gold data.
+3. Mark can answer or reason better using social knowledge.
+4. Multiple providers can contribute to one canonical social graph.
+5. Another application can consume the same curated dataset without depending on TikTok-specific internals.
+
+The success metric is therefore not "scraped comment count".
+
+The real metric is:
+
+**useful, reproducible, provenance-aware digital behavioral knowledge.**

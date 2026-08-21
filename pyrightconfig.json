@@ -1,0 +1,29 @@
+{
+  "typeCheckingMode": "basic",
+  "venvPath": ".",
+  "venv": ".venv",
+  "executionEnvironments": [
+    {
+      "root": "src",
+      "pythonVersion": "3.12",
+      "extraPaths": ["src"]
+    },
+    {
+      "root": "scripts",
+      "pythonVersion": "3.12",
+      "extraPaths": ["src"]
+    },
+    {
+      "root": "tests",
+      "pythonVersion": "3.12",
+      "extraPaths": ["src"]
+    }
+  ],
+  "reportMissingImports": "error",
+  "reportUndefinedVariable": "error",
+  "reportMissingTypeStubs": "none",
+  "reportUnusedImport": "warning",
+  "reportUnusedVariable": "warning",
+  "reportGeneralTypeIssues": "warning",
+  "reportUntypedFunctionDecorator": "none"
+}

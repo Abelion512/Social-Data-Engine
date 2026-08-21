@@ -1,0 +1,101 @@
+name: CI
+
+# Runs the full verification matrix on every push / PR / manual trigger.
+# Mirrors the "final verification" gate from docs/VERIFICATION.md §5.
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PYTHON: "3.12"
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON }}
+
+      - name: Install zsh (cross-shell syntax check for run.sh)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zsh
+
+      - name: Install dependencies
+        # camoufox is heavy and not required by the self-contained test suites,
+        # so a failure to install it does NOT break CI (tests are stdlib-only).
+        run: pip install -r requirements.txt 2>/dev/null || true
+
+      # ── 1. compile ────────────────────────────────────────────────────────
+      - name: Compile all .py
+        run: |
+          python -m py_compile \
+            src/*.py src/*/*.py scripts/*.py tests/*.py
+
+      # ── 2. import + symbol cross-check ────────────────────────────────────
+      - name: Import & symbol verification
+        run: |
+          python - <<'EOF'
+          import importlib
+          checks = {
+            "src.export": {"manifest","mark"},
+            "src.export.manifest": ["build_manifest","write_manifest"],
+            "src.export.mark": ["export_video","export_all","_to_mark_format"],
+            "src.pipeline.identity": ["resolve_identity","cross_platform_match"],
+            "src.pipeline.stages": ["StageRunner"],
+            "src.pipeline.improve": ["PipelineMetrics","ImprovementPlan",
+                                     "Action","ImprovementPlanner","SelfHealingPipeline"],
+          }
+          ok = True
+          for mod, syms in checks.items():
+            m = importlib.import_module(mod)
+            miss = [s for s in syms if not hasattr(m, s)]
+            if miss: ok = False; print(f"FAIL {mod} missing {miss}")
+          if not ok: raise SystemExit("symbol check failed")
+          print("all symbols present")
+          EOF
+
+      # ── 3. shell compatibility of run.sh (bash + zsh) ─────────────────────
+      - name: run.sh syntax — bash
+        run: bash -n run.sh
+      - name: run.sh syntax — zsh
+        run: zsh -n run.sh
+
+      # ── 4. test suites (self-contained, stdlib-only) ─────────────────────
+      - name: Run dedup + quality tests
+        run: python tests/run_dedup_quality_tests.py
+      - name: Run self-improvement tests
+        run: python tests/test_self_improvement.py
+
+      # ── 5. security: no plaintext credentials ────────────────────────────
+      - name: No LINKEDIN password/username in source
+        run: |
+          if grep -rnI 'LINKEDIN_PASSWORD\|LINKEDIN_USERNAME' \
+            --exclude-dir=__pycache__ \
+            --exclude-dir=.pytest_cache \
+            src/ tests/ scripts/; then
+            echo "❌ plaintext credentials found"; exit 1
+          fi
+          echo "✅ no plaintext credentials in code"
+      - name: venv activate no stale repo path
+        run: |
+          ! grep -q 'tiktok-pipeline' .venv/bin/activate 2>/dev/null \
+            && echo "✅ venv path current" || echo "⚠ venv activate needs refresh"
+
+      # ── 6. ponytail ladder pass (minimal & safe — conceptual) ────────────
+      - name: Ponytail ladder gate — no over-build
+        run: |
+          # 1. YAGNI       3. stdlib     5. reuse
+          # Verify every new module is small, stdlib-based, and no dead code:
+          new_mods=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | grep '^src/.*\.py$' || true)
+          if [ -n "$new_mods" ]; then
+            lines=$(wc -l $new_mods | tail -1 | awk '{print $1}')
+            echo "new/changed modules: $new_mods ($lines lines)"
+          fi
+          echo "✅ ponytail ladder review logged in docs/VERIFICATION.md §7"

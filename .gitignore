@@ -8,11 +8,13 @@ __pycache__/
 *.pyd
 
 # Distribution / packaging
-*.egg-info/
 dist/
 build/
+*.egg
+*.egg-info/
 
 # Logs
+logs/
 *.log
 pipeline_*.log
 
@@ -26,9 +28,21 @@ state/
 *.state
 *.pkl
 
-# Scraped corpus (privacy + volume)
-data/
-*.jsonl
+# Runtime browser + credential state (9Router, LinkedIn session)
+.tiktok-linkedin/
+*.tokens.json
+
+# Scraped corpus: data/ & *.jsonl TRACKED (hasil scrap publik), karena hasil
+# scraping adalah output utama pipeline (bukan sampah). Hanya output TRANSISEN
+# (run metrics / improve output / temp) yang di-exclude:
+data/benchmarks/
+data/manifests/*.improve.jsonl
+*.tmp
+# pastikan folder penting selalu ada di repo meski kosong
+!data/
+!data/raw/
+!data/samples/
+!data/manifests/
 
 # IDE
 .vscode/
@@ -42,6 +56,7 @@ Thumbs.db
 
 # Test coverage
 .coverage
+.coverage.*
 htmlcov/
 .pytest_cache/
 
@@ -49,6 +64,3 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
-
-# ── Runtime log samples ──
-pipeline_*.log

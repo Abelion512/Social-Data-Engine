@@ -54,7 +54,6 @@ from src.linkedin_consumer import (
 from src.config import (
     LLM_API as DEEPSEEK_API,
     LLM_KEY as DEEPSEEK_KEY,
-    LLM_MODEL as DEEPSEEK_MODEL,
     ENRICH_MODELS,
     VISION_MODEL,
     VISION_MODEL_FALLBACK,
@@ -433,7 +432,7 @@ async def run_pipeline(
         _record_connections(connections)
         print(f"\n[done] {len(connections)} requests sent")
     else:
-        print(f"\n[review] Run with --connect to send requests.")
+        print("\n[review] Run with --connect to send requests.")
 
     # ── Step 6: CSV Report ──
     report = write_csv_report(comments, matches, connections)
