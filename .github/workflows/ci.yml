@@ -76,7 +76,10 @@ jobs:
       # ── 5. security: no plaintext credentials ────────────────────────────
       - name: No LINKEDIN password/username in source
         run: |
-          if grep -rn 'LINKEDIN_PASSWORD\|LINKEDIN_USERNAME' src/ tests/ scripts/; then
+          if grep -rnI 'LINKEDIN_PASSWORD\|LINKEDIN_USERNAME' \
+            --exclude-dir=__pycache__ \
+            --exclude-dir=.pytest_cache \
+            src/ tests/ scripts/; then
             echo "❌ plaintext credentials found"; exit 1
           fi
           echo "✅ no plaintext credentials in code"
