@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import os
 import sys
 import time
 from pathlib import Path
@@ -23,6 +24,9 @@ from typing import List, Dict, Optional
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+# Installable/portable data root — set $SDE_DATA_DIR untukarahkan ke mana saja
+# (konsep portability sama .venv). Default → repo-root/data.
+DATA_DIR = Path(os.environ.get("SDE_DATA_DIR") or (_ROOT / "data"))
 
 from src.browser_selector import BrowserSession
 from src.harness.human import apply_stealth, resolve_captcha_if_present, ahuman_delay
@@ -36,7 +40,8 @@ from src.tiktok_schema import (
 # ── Paths ─────────────────────────────────────────────────────────────────────
 PROFILE_DIR = Path.home() / ".tiktok-linkedin" / "chrome-profile"
 STATE_DIR = Path.home() / ".tiktok-linkedin" / "state"
-DATA_DIR = _ROOT / "data"
+# DATA_DIR sudah didefinisikan di atas (SDE_DATA_DIR env, default repo data) —
+# semua sub-path berikut ikut portabel.
 RAW_DIR = DATA_DIR / "raw"
 MANIFEST_DIR = DATA_DIR / "manifests"
 JOB_DIR = STATE_DIR / "jobs"
@@ -237,7 +242,19 @@ VIEW_ALL_JS = r"""(() => {
 CHECK_BLOCK_JS = r"""(() => {
     var bt = document.body ? document.body.innerText.slice(0, 3000) : '';
     var u = window.location.href;
-    return JSON.stringify({ url: u, blocked: /login|verify/i.test(u) || (/Verify/.test(bt) && /human/.test(bt)) });
+    // Challenge sekarang TikTok pakai modal overlay (bukan redirect /verify URL):
+    // cek element CAPTCHA/verification/slider + teks challenge di body.
+    var modal = !!document.querySelector(
+        '[class*="captcha"],[class*="Captcha"],[class*="verify"],[class*="Verify"],'
+        + '[class*="slider"],[class*="Slider"],#tiktok-verify,[data-e2e="captcha"],'
+        + 'iframe[src*="captcha"],iframe[src*="verify"],[class*="verification"],'
+        + '[class*="challenge"],[class*="Challenge"]'
+    );
+    var blocked = /login|verify|captcha|challenge/i.test(u)
+               || (/Verify|Verification|captcha/i.test(bt) && /human|robot/i.test(bt))
+               || /Please verify|are you a human|security check|captcha/i.test(bt.slice(0,400))
+               || modal;
+    return JSON.stringify({ url: u, blocked: blocked, modal: modal });
 })()"""
 
 IMAGE_ENRICH_JS = r"""(comment_ids) => {

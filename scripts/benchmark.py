@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -45,8 +46,11 @@ try:
 except Exception:
     COLLECTOR_VERSION = "unknown"
 
-BENCH_DIR = Path("data/benchmarks")
-MANIFEST_DIR = Path("data/manifests")
+# Installable/portable data root — set $SDE_DATA_DIR untukarahkan ke mana saja
+# (sama portability konsep .venv). Default → repo-root/data.
+_DATA_ROOT = Path(os.environ.get("SDE_DATA_DIR") or (Path(__file__).resolve().parent.parent / "data"))
+BENCH_DIR = _DATA_ROOT / "benchmarks"
+MANIFEST_DIR = _DATA_ROOT / "manifests"
 
 
 def _git_describe() -> str:
