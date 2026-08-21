@@ -571,7 +571,13 @@ async def _read_tiktok_session(detected: "DetectedBrowser", timeout: float = 10.
         # Detach (bukan terminate!) — browser user tetap hidup.
         if browser is not None:
             try:
-                await browser.close()  # CDP → disconnect ws, tidak kill browser
+                disc = getattr(browser, "disconnect", None)
+                if callable(disc):
+                    try:
+                        await disc()   # CDP attach → detach ws saja, JANGAN kill browser user
+                    except Exception:
+                        pass  # PW 1.60 `Browser.disconnect` mungkin tidak ada → cukup drop ref (GC)
+                # tidak panggil browser.close() — itu TERMINATE browser user di CDP attach!
             except Exception:
                 pass
         if pw is not None:
@@ -642,7 +648,13 @@ async def _prompt_user_login(detected: "DetectedBrowser") -> bool:
     finally:
         if browser is not None:
             try:
-                await browser.close()  # CDP connect → detach ws, tidak kill browser user
+                disc = getattr(browser, "disconnect", None)
+                if callable(disc):
+                    try:
+                        await disc()   # CDP connect → detach ws, JANGAN kill browser user
+                    except Exception:
+                        pass
+                # tidak browser.close() — terminate browser user!
             except Exception:
                 pass
         if pw is not None:
@@ -844,7 +856,13 @@ async def _inject_cookies_and_recheck(detected: "DetectedBrowser",
     finally:
         if browser is not None:
             try:
-                await browser.close()  # CDP connect → detach ws, tidak kill browser user
+                disc = getattr(browser, "disconnect", None)
+                if callable(disc):
+                    try:
+                        await disc()   # CDP connect → detach ws, JANGAN kill browser user
+                    except Exception:
+                        pass
+                # tidak browser.close() — terminate browser user!
             except Exception:
                 pass
         if pw is not None:
