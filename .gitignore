@@ -32,9 +32,17 @@ state/
 .tiktok-linkedin/
 *.tokens.json
 
-# Scraped corpus (privacy + volume)
-data/
-*.jsonl
+# Scraped corpus: data/ & *.jsonl TRACKED (hasil scrap publik), karena hasil
+# scraping adalah output utama pipeline (bukan sampah). Hanya output TRANSISEN
+# (run metrics / improve output / temp) yang di-exclude:
+data/benchmarks/
+data/manifests/*.improve.jsonl
+*.tmp
+# pastikan folder penting selalu ada di repo meski kosong
+!data/
+!data/raw/
+!data/samples/
+!data/manifests/
 
 # IDE
 .vscode/

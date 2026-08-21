@@ -8,7 +8,6 @@ Terpisah dari collector agar TikTok Data Engine bisa dipakai consumer lain.
 from __future__ import annotations
 import json
 import os
-import re
 import subprocess
 import time
 from pathlib import Path
@@ -253,7 +252,6 @@ async def run_linkedin_consumer(
     Baca: data/curated/<date>/<video_id>.jsonl
     Output: CSV report di STATE_DIR
     """
-    from datetime import datetime
     today = time.strftime("%Y-%m-%d")
     curated_file = data_dir / "curated" / today / f"{video_id}.jsonl"
     if not curated_file.exists():

@@ -755,6 +755,7 @@ async def collect_video(
         "video_id": video_id,
         "output": str(out_path),
         "comments": captured,
+        "mode": "cdp" if session.is_cdp else "camoufox",
         "job_id": job_state["job_id"],
         "reported_comment_count": reported_count,
         "coverage": coverage,

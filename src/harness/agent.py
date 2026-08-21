@@ -16,10 +16,9 @@ JS per platform). Core loop tidak tahu platform — cuma pemilih tool.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from src.harness.tools import AgentTool, default_toolkit
 from src.harness.human import apply_stealth, ahuman_delay, resolve_captcha_if_present

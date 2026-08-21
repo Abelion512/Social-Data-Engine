@@ -10,7 +10,7 @@ trace** (evidence sampai tuntas).
 from __future__ import annotations
 
 __all__ = [
-    "harness", "Harness", "BrowserAgent", "AgentTool",
+    "harness", "Harness", "BrowserAgent", "AgentTool", "ProviderAdapter",
     "register", "resolve", "probe", "agent", "tools", "collect",
 ]
 

@@ -8,9 +8,8 @@ dengan satu antarmuka meski sumber data berbeda-beda.
 """
 from __future__ import annotations
 
-import asyncio
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 from src.schema.canonical import Observation
 

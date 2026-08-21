@@ -9,16 +9,13 @@ TikTok, LinkedIn, YouTube, atau Reddit.
 """
 from __future__ import annotations
 
-import asyncio
-import re
-import time
-from typing import List, Dict, Optional
+from typing import List, Dict
 
-from src.providers.base import ProviderAdapter, AgentProvider
+from src.providers.base import AgentProvider
 from src.harness.registry import harness
 from src.schema.canonical import Observation
 from src.schema.mapper import tiktok_to_canonical
-from src.tiktok_schema import RawComment, write_jsonl
+from src.tiktok_schema import RawComment
 
 try:
     from camoufox.async_api import AsyncCamoufox

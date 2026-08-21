@@ -14,7 +14,6 @@ from src.schema.canonical import (
     Observation,
     Content,
     Provenance,
-    Entity,
     Confidence,
     Annotation,
 )
