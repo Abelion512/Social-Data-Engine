@@ -697,17 +697,29 @@ async def collect_video(
                 video_ctx["video_url"] = video_url
 
             # Open comment panel
+            # DOM `.click()` di CLICK_COMMENT_PANEL_JS sering TIDAK trigger React
+            # listener TikTok → panel tak terbuka ("not found" meski elemen ada,
+            # apalagi di /photo/ carousel). Pakai `page.click` (realistic mouse)
+            # + wait_render sebelum klik.
+            open_sel = '[data-e2e="comment-icon"], [data-e2e="comment-count"]'
+            try:
+                await page.wait_for_selector(open_sel, state="attached", timeout=15000)
+            except Exception:
+                pass  # tetap coba klik
             click_result = "not found"
             for attempt in range(5):
                 try:
-                    click_result = await page.evaluate(CLICK_COMMENT_PANEL_JS)
-                except Exception:
-                    click_result = "eval error"
-                print(f"[collector] open panel: {click_result}")
-                if click_result != "not found":
+                    await page.click(open_sel, timeout=5000)
+                    click_result = "clicked via page.click"
+                except Exception as e:
+                    click_result = f"click err: {str(e)[:40]}"
+                print(f"[collector] open panel (attempt {attempt+1}): {click_result}")
+                levels = await page.evaluate('document.querySelectorAll(\'[data-e2e^="comment-level-"]\').length')
+                if levels > 0:
+                    print(f"[collector] ✓ comment panel terbuka ({levels} level items)")
                     break
                 await asyncio.sleep(2)
-            if click_result == "not found":
+            if click_result not in ("clicked via page.click",):
                 va = await page.evaluate(VIEW_ALL_JS)
                 print(f"[collector] view-all: {va}")
                 await asyncio.sleep(2)
