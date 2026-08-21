@@ -12,6 +12,7 @@ Proves (no browser, no network, stdlib only):
  7. Duplicate pages/items do not corrupt state       → unique ids only, counts correct
  8. TikTok-shaped payloads run on the runtime        → the proven 198+ page script
  9. A second fake provider runs unmodified           → runtime untouched per provider
+10. Resuming a COMPLETED run reports persisted count → no provider call, no rewrite
 
 Run:  python -m pytest tests/test_acquisition_runtime.py -v
       python tests/test_acquisition_runtime.py
@@ -360,6 +361,43 @@ def test_tiktok_shaped_actor_runs_on_runtime_past_198_boundary():
 
 # ── 9. A second provider needs zero runtime changes ──────────────────────────
 
+# ── 10. Resume of an already-completed checkpoint ────────────────────────────
+
+def test_resume_completed_checkpoint_reports_persisted_items_seen():
+    """Regression: the terminal-checkpoint resume path used to return before
+    dataset.load_seen(), reporting items_seen=0 despite a populated dataset."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ctx = make_ctx(tmpdir)
+        actor = FakeActor([
+            PageResult(items=items("a", 0, 50), next_cursor=50, has_more=True),
+            PageResult(items=items("a", 50, 50), next_cursor=100, has_more=False),
+        ])
+        s1 = run(AcquisitionRuntime().run(actor, ctx))
+        assert s1.items_seen == 100
+        assert s1.termination_reason == "has_more_false"
+
+        calls_before = len(actor.calls)
+        dataset_before = read_lines(ctx.dataset_path)
+
+        # Resume the ALREADY-COMPLETED job.
+        s2 = run(AcquisitionRuntime().run(actor, ctx, RunOptions(resume=True)))
+
+        assert s2.resumed is True
+        # Provider must NOT be called again
+        assert len(actor.calls) == calls_before
+        # Dataset must not be modified (byte-identical records, same count)
+        dataset_after = read_lines(ctx.dataset_path)
+        assert dataset_after == dataset_before
+        assert len(dataset_after) == 100
+        # Termination reason preserved from the checkpoint
+        assert s2.termination_reason == s1.termination_reason == "has_more_false"
+        assert s2.outcome == Outcome.SUCCESS
+        # Nothing new written this invocation…
+        assert s2.items_written == 0
+        # …but items_seen reflects the ACTUAL persisted unique records (≠ 0)
+        assert s2.items_seen == 100
+
+
 def test_second_provider_runs_unmodified():
     with tempfile.TemporaryDirectory() as tmpdir:
 
@@ -405,6 +443,7 @@ if __name__ == "__main__":
         test_duplicate_pages_and_items_do_not_corrupt_state,
         test_tiktok_shaped_actor_runs_on_runtime_past_198_boundary,
         test_second_provider_runs_unmodified,
+        test_resume_completed_checkpoint_reports_persisted_items_seen,
     ]
     passed = failed = 0
     for t in tests:

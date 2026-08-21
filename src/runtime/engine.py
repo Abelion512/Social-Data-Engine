@@ -96,6 +96,10 @@ class AcquisitionRuntime:
             if pag:
                 state = PaginationState.from_dict(pag)
                 resumed = True
+                # Reconcile the persisted dataset BEFORE any early-return path
+                # below, so items_seen always reflects what is actually on disk
+                # (read-only replay of ids — never mutates the dataset).
+                dataset.load_seen()
                 # A cap-terminated run may continue when the cap is raised
                 # (same semantics as the TikTok collector resume path).
                 if (
@@ -111,7 +115,8 @@ class AcquisitionRuntime:
                     state.has_more = True
                     state.termination_reason = None
                 if not state.has_more:
-                    # Already terminally stopped — nothing to re-run.
+                    # Already terminally stopped — nothing to re-run: no provider
+                    # call, no dataset write, reason preserved, real item count.
                     self._print(f"[runtime] run {ctx.job_id} already terminated: "
                                 f"{state.termination_reason}")
                     return self._summary(ctx, dataset, state, 0, resumed)
@@ -126,7 +131,7 @@ class AcquisitionRuntime:
             )
 
         if resumed:
-            dataset.load_seen()
+            # Dataset ids were already replayed above; just sync state's counter.
             state.record_items(len(dataset.seen_ids))
             self._print(f"[runtime] resume {ctx.job_id}: cursor={state.cursor} "
                         f"seen={state.items_seen} page={state.page_index}")
