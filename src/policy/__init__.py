@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-Policy vocabulary — machine-readable contract ONLY.
+Policy layer — machine-readable contract + deterministic evaluator.
 
-This package defines the data models for future policy enforcement:
-Capability, CapabilityRequest, PolicyDecision, ExecutionBudget.
+Models (models.py): Capability, CapabilityRequest, PolicyDecision,
+ExecutionBudget — the shared vocabulary. No second capability system exists.
 
-There is NO evaluator here. Nothing in this package grants, denies, or
-enforces anything at runtime. See docs/architecture/POLICY-ARCHITECTURE.md
-for where enforcement will integrate, and ENGINEERING_CONSTITUTION.md for
-the principles these models serve.
+Evaluator (evaluator.py): PolicyEvaluator v0 — deterministic,
+deny-by-default evaluation of CapabilityRequest → PolicyDecision over an
+immutable, versioned PolicyProfile. Every uncertain path (missing policy,
+unknown capability, malformed request, evaluator error) resolves to DENY.
+See docs/architecture/POLICY-ARCHITECTURE.md and ENGINEERING_CONSTITUTION.md.
 
-Stdlib only. Every model is serializable (to_dict/from_dict round-trip) and
-stamps POLICY_MODEL_VERSION into its serialized form.
+Stdlib only. No provider imports. No LLM, no network, no external service.
 """
 from src.policy.models import (
     CAP_BROWSER_AUTOMATE,
@@ -25,6 +25,12 @@ from src.policy.models import (
     ExecutionBudget,
     PolicyDecision,
 )
+from src.policy.evaluator import (
+    PolicyDecisionRecord,
+    PolicyEvaluator,
+    PolicyProfile,
+    PolicyRule,
+)
 
 __all__ = [
     "CAP_BROWSER_AUTOMATE",
@@ -37,4 +43,8 @@ __all__ = [
     "CapabilityRequest",
     "ExecutionBudget",
     "PolicyDecision",
+    "PolicyDecisionRecord",
+    "PolicyEvaluator",
+    "PolicyProfile",
+    "PolicyRule",
 ]
