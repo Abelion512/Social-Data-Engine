@@ -49,6 +49,11 @@ declarations.
 - opaque resource descriptor (URL or path as a plain string — policy does not parse it)
 - purpose tag supplied by the caller
 - run context: `run_id`, `job_id`, current budget-consumption snapshot from `AcquisitionMetrics`
+- optional `metadata`: **non-secret policy context only**. Credentials,
+  tokens, cookies, passwords, API keys, and secrets MUST NOT be placed in
+  metadata — it is not a secret transport. The future policy evaluator must
+  reject or sanitize secret-bearing context rather than propagate or log it
+  (no scanner exists yet; this is a contract rule, not enforced code).
 
 ## Decisions returned
 

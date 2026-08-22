@@ -71,7 +71,11 @@ doc that proves each claim. Never describe a PLANNED control as active.
    `LINKEDIN_PASSWORD`/`USERNAME` in code.
 5. **Ponytail ladder.** YAGNI / reuse / stdlib / minimal — never cut
    validation, error handling, security, or provenance.
-6. **Provenance required.** `AcquisitionMetrics` + manifests recorded per run.
+6. **Provenance-aware.** Preserve and propagate provenance wherever the
+   current pipeline supports it (`AcquisitionMetrics`, run/job ids,
+   manifests where written). Never fabricate missing provenance; missing
+   provenance must remain visible as a known limitation until universal
+   enforcement exists (Constitution §8 — PARTIALLY IMPLEMENTED).
 7. **Deterministic termination.** `AcquisitionRuntime` runs end with an
    explicit `TerminationReason` + `Outcome` classification under
    item/page/retry budgets. Other entry points (legacy collector scripts,

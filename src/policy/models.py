@@ -77,13 +77,22 @@ CAP_BROWSER_AUTOMATE = Capability("browser.automate", "Drive a browser session")
 
 @dataclass(frozen=True)
 class CapabilityRequest:
-    """The context necessary to evaluate one capability request — no more."""
+    """The context necessary to evaluate one capability request — no more.
+
+    metadata carries NON-SECRET policy context only (see field comment):
+    it is never a secret transport.
+    """
 
     actor_id: str
     capability_name: str
     resource: str = ""          # opaque target descriptor (URL/path); policy decides how to treat it
     purpose: str = ""
     requested_at: str = field(default_factory=_utc_now)
+    # NON-SECRET policy context ONLY. Credentials, tokens, cookies, passwords,
+    # API keys, and any other secrets MUST NOT be placed here. metadata is not
+    # a secret transport; the future policy evaluator must reject or sanitize
+    # secret-bearing context rather than propagate or log it
+    # (policies/SECURITY.md, docs/architecture/POLICY-ARCHITECTURE.md).
     metadata: Dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self):

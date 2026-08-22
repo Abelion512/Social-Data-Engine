@@ -29,6 +29,9 @@ states only what the code actually does today.
 - No arbitrary process execution by default — `process.execute` becomes a
   distinct, approvable capability rather than something any harness tool can do.
 - Secrets redaction at log/event boundaries.
+- Policy-context hygiene: `CapabilityRequest.metadata` is non-secret policy
+  context only; the future evaluator must reject or sanitize secret-bearing
+  context (contract rule today, no scanner implemented).
 - Plugin sandboxing / isolation (explicitly out of scope until designed).
 
 ## Non-goals
