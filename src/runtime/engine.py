@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from src.runtime.context import RunContext, utc_now
-from src.runtime.checkpoint import CheckpointStore
+from src.runtime.checkpoint import CheckpointStore, CheckpointCorrupt
 from src.runtime.dataset import JsonlDataset
 from src.runtime.actor import AcquisitionActor, PageResult
 from src.runtime.state import PaginationState
@@ -91,7 +91,34 @@ class AcquisitionRuntime:
         resumed = False
 
         if options.resume and ckpt.exists():
-            prev = ckpt.load() or {}
+            try:
+                prev = ckpt.load() or {}
+            except CheckpointCorrupt as e:
+                # Fail-closed (ENGINEERING_CONSTITUTION.md §3): a corrupt
+                # checkpoint is NEVER silently treated as a fresh run —
+                # resume must not guess. Report an explicit terminal
+                # recovery failure; discarding/fixing the checkpoint file is
+                # an explicit human recovery decision, not an automatic
+                # fallback.
+                self._print(
+                    f"[runtime] RECOVERY FAILURE {ctx.job_id}: {e} — "
+                    "not resuming and NOT restarting; fix or remove the "
+                    "checkpoint explicitly"
+                )
+                dataset.load_seen()  # read-only replay: honest items_seen
+                return RunSummary(
+                    run_id=ctx.run_id,
+                    job_id=ctx.job_id,
+                    provider=ctx.provider,
+                    resumed=False,
+                    termination_reason="checkpoint_corrupt",
+                    outcome=classify_termination("checkpoint_corrupt"),
+                    items_written=0,
+                    items_seen=len(dataset.seen_ids),
+                    metrics={},
+                    dataset_path=str(ctx.dataset_path),
+                    checkpoint_path=str(ctx.checkpoint_path),
+                )
             pag = prev.get("pagination")
             if pag:
                 state = PaginationState.from_dict(pag)

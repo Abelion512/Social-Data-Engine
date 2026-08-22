@@ -46,15 +46,15 @@ Research / ML / Export
 | Component | Status | Where |
 |---|---|---|
 | Bounded execution runtime | PARTIALLY IMPLEMENTED | `src/runtime/` — hard `max_items` cap, page cap, retry/stall budgets; NO wall-clock or network-call budget; legacy collector scripts and harness agents are not uniformly bounded |
-| Checkpoint / recoverable state | PARTIALLY IMPLEMENTED | `src/runtime/checkpoint.py` — atomic writes, durability ordering, resume reconciliation proven for `AcquisitionRuntime` only; legacy pipeline persistence is separate and ad-hoc |
+| Checkpoint / recoverable state | PARTIALLY IMPLEMENTED | `src/runtime/checkpoint.py` — atomic writes, durability ordering, resume reconciliation, and fail-closed corrupt-checkpoint handling (explicit terminal `checkpoint_corrupt`, never silent fresh-run) proven for `AcquisitionRuntime` only; legacy pipeline persistence is separate and ad-hoc |
 | Provider-independent runtime core | IMPLEMENTED | `docs/RUNTIME.md §B`; runtime imports stdlib + `src.runtime` only |
 | Provider adapters (TikTok) | IMPLEMENTED | `src/providers/` behind `src/providers/base.py` |
 | Normalization / dedup / quality | IMPLEMENTED | `src/schema/`, `src/pipeline/` (deterministic tests green) |
-| Export (manifest / mark / CSV) | IMPLEMENTED | `src/export/` |
+| Export (manifest / mark / CSV) | PARTIALLY IMPLEMENTED | `src/export/` modules exist and are wired into scripts; no dedicated deterministic tests prove their output |
 | Provenance (metrics + manifests) | PARTIALLY IMPLEMENTED | `Provenance`/`Confidence` schema classes declared; `AcquisitionMetrics` persisted in checkpoints/`RunSummary`; manifests are written only by the legacy improve loop — NOT universally by every acquisition path |
 | Policy / capability gate | PLANNED | contract models exist (`src/policy/`: `Capability`, `CapabilityRequest`, `PolicyDecision`, `ExecutionBudget`) but NOTHING evaluates or enforces them — no evaluator, no sandbox, no approvals |
 | Plugin sandboxing / isolation | PLANNED | nothing exists yet — harness tools run with full process privileges |
-| Human approval workflows | PLANNED | nothing exists yet |
+| Runtime human override (stop/approve/deny/escalate) | PLANNED | nothing exists in the executing run; developer-process human-in-the-loop (live-test gate, manual login/captcha) is workflow control, NOT runtime override |
 
 When documenting or reviewing, label claims `IMPLEMENTED`,
 `PARTIALLY IMPLEMENTED`, `DOCUMENTED ONLY`, or `PLANNED`. Cite the test or

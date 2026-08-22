@@ -7,6 +7,16 @@ from pathlib import Path
 from typing import Optional
 
 
+class CheckpointCorrupt(RuntimeError):
+    """The checkpoint file exists but is unreadable/corrupt.
+
+    Fail-closed policy (ENGINEERING_CONSTITUTION.md §3): a corrupt checkpoint
+    MUST NOT be silently treated as a fresh run. Callers must surface an
+    explicit recovery failure; discarding or moving the corrupt file is an
+    explicit human recovery decision, never an automatic fallback.
+    """
+
+
 class CheckpointStore:
     """Durable, atomic checkpoint for one run.
 
@@ -30,9 +40,17 @@ class CheckpointStore:
         tmp.replace(self.path)
 
     def load(self) -> Optional[dict]:
+        """Return the parsed checkpoint dict, or None if the file is absent.
+
+        Raises CheckpointCorrupt when the file EXISTS but cannot be parsed.
+        Resume must never guess: absent means fresh start is legitimate;
+        present-but-unreadable is a loud recovery failure.
+        """
         if not self.path.exists():
             return None
         try:
             return json.loads(self.path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
+        except Exception as e:
+            raise CheckpointCorrupt(
+                f"{self.path}: checkpoint unreadable ({e})"
+            ) from e

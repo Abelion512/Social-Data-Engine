@@ -29,8 +29,11 @@ escalate on their own.
 - **Wall-clock and network-call budgets** (`ExecutionBudget.max_runtime_seconds`,
   `max_network_calls`) consumed by the loop — vocabulary exists in
   `src/policy/models.py`, nothing consumes them yet.
-- **Human override / REQUIRE_APPROVAL** for dangerous future capabilities
-  (process execution, new external endpoints, evasion-class behavior).
+- **Human override** — runtime verbs **stop / approve / deny / escalate**
+  over an executing autonomous action; `REQUIRE_APPROVAL` routes dangerous
+  future capabilities (process execution, new external endpoints,
+  evasion-class behavior) to it. Developer-process human-in-the-loop
+  (live-test gate, manual login/captcha fallback) is NOT this mechanism.
 - **Kill switch** — operator-visible, run-scoped stop signal honored between
   actions.
 - **Loop-engine bounds** — the future autonomous loop must inherit the same

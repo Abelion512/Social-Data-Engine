@@ -37,8 +37,14 @@ write anywhere the process can write.
 deny; never guess toward "allow".
 **Does NOT mean:** crashing without cleanup — failure must still checkpoint.
 **Enforced today:** unknown/unclassified termination reasons classify as
-`PERMANENT_FAILURE` (`src/runtime/termination.py`); a corrupt checkpoint is
-treated as absent, not resumed blindly; low-quality records are gated out.
+`PERMANENT_FAILURE` (`src/runtime/termination.py`); a corrupt/unreadable
+checkpoint on resume produces an EXPLICIT terminal recovery failure
+(`checkpoint_corrupt`) — it MUST NOT be silently treated as a fresh run;
+low-quality records are gated out.
+**Recovery rule:** resume never guesses. Discarding, moving, or rebuilding a
+corrupt checkpoint is an explicit human recovery decision — any destructive
+or duplicate-prone recovery requires that decision, never an automatic
+fallback.
 **Not yet enforced:** there is no policy layer whose failure must deny.
 **Future enforcer:** evaluator exceptions resolve to `DENY`.
 
@@ -103,16 +109,20 @@ synthetic fixtures in `data/samples/`, pure rule-based planner.
 versions are not yet recorded with outputs.
 **Future enforcer:** locked environments + policy version stamping.
 
-## 10. Human override — PARTIALLY IMPLEMENTED
-**Means:** a human can stop, approve, or override any automated action, and
-dangerous capabilities require explicit human approval.
-**Does NOT mean:** the current captcha-solving/stealth automation counts as
-human oversight — it is precisely the kind of capability that must sit behind
-approval once the gate exists (see `policies/ACCEPTABLE-USE.md`).
-**Enforced today:** process-level rule — live-test before merge is
-human-in-the-loop; login/captcha manual fallback exists.
-**Not implemented:** in-run approval workflow, kill switch.
-**Future enforcer:** `REQUIRE_APPROVAL` decision path + approval store.
+## 10. Human override — PLANNED
+**Means:** runtime-level verbs — **stop / approve / deny / escalate** —
+exercisable by a human over an EXECUTING autonomous action.
+**Does NOT mean:** developer-process human-in-the-loop counts as override.
+Live-test-before-merge approval, manual login/captcha fallback, and code
+review are workflow controls outside the executing run; they do not give a
+human authority over an in-flight action. The captcha-solving/stealth
+automation is likewise not oversight — it is exactly the class of capability
+that must sit behind approval once the gate exists
+(see `policies/ACCEPTABLE-USE.md`).
+**Status:** nothing in the codebase exposes runtime override verbs today.
+**Future enforcer:** `REQUIRE_APPROVAL` decision path + approval store
+(stop/approve/deny/escalate) wired into the execution loop
+(`docs/architecture/POLICY-ARCHITECTURE.md`, approval hooks).
 
 ## 11. Versioned policy — DOCUMENTED ONLY
 **Means:** policy rules are versioned; every decision records which policy
@@ -137,7 +147,9 @@ or masquerade as each other.
 **Does NOT mean:** all pipelines are checkpoint-based today.
 **Enforced today:** atomic tmp+replace checkpoints, durability ordering
 (dataset write BEFORE checkpoint commit), resume reconciles the dataset by
-replaying ids — all scoped to `AcquisitionRuntime`.
+replaying ids, and a corrupt checkpoint fails loudly as an explicit terminal
+recovery failure instead of masquerading as a fresh run — all scoped to
+`AcquisitionRuntime`.
 **Future enforcer:** the same primitives generalized to loop engines and
 harnesses.
 
