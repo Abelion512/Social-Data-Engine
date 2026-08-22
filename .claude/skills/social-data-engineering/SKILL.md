@@ -45,15 +45,15 @@ Research / ML / Export
 
 | Component | Status | Where |
 |---|---|---|
-| Bounded execution runtime | IMPLEMENTED | `src/runtime/` (engine, termination reasons, hard `max_items` cap) |
-| Checkpoint / recoverable state | IMPLEMENTED | `src/runtime/checkpoint.py`, `state.py` |
+| Bounded execution runtime | PARTIALLY IMPLEMENTED | `src/runtime/` — hard `max_items` cap, page cap, retry/stall budgets; NO wall-clock or network-call budget; legacy collector scripts and harness agents are not uniformly bounded |
+| Checkpoint / recoverable state | PARTIALLY IMPLEMENTED | `src/runtime/checkpoint.py` — atomic writes, durability ordering, resume reconciliation proven for `AcquisitionRuntime` only; legacy pipeline persistence is separate and ad-hoc |
 | Provider-independent runtime core | IMPLEMENTED | `docs/RUNTIME.md §B`; runtime imports stdlib + `src.runtime` only |
 | Provider adapters (TikTok) | IMPLEMENTED | `src/providers/` behind `src/providers/base.py` |
 | Normalization / dedup / quality | IMPLEMENTED | `src/schema/`, `src/pipeline/` (deterministic tests green) |
 | Export (manifest / mark / CSV) | IMPLEMENTED | `src/export/` |
-| Provenance (metrics + manifests) | PARTIALLY IMPLEMENTED | `src/runtime/metrics.py`, `data/manifests/` |
-| Policy / capability gate | PLANNED | nothing exists yet — do not claim enforcement |
-| Plugin sandboxing / isolation | PLANNED | nothing exists yet |
+| Provenance (metrics + manifests) | PARTIALLY IMPLEMENTED | `Provenance`/`Confidence` schema classes declared; `AcquisitionMetrics` persisted in checkpoints/`RunSummary`; manifests are written only by the legacy improve loop — NOT universally by every acquisition path |
+| Policy / capability gate | PLANNED | contract models exist (`src/policy/`: `Capability`, `CapabilityRequest`, `PolicyDecision`, `ExecutionBudget`) but NOTHING evaluates or enforces them — no evaluator, no sandbox, no approvals |
+| Plugin sandboxing / isolation | PLANNED | nothing exists yet — harness tools run with full process privileges |
 | Human approval workflows | PLANNED | nothing exists yet |
 
 When documenting or reviewing, label claims `IMPLEMENTED`,
@@ -72,8 +72,10 @@ doc that proves each claim. Never describe a PLANNED control as active.
 5. **Ponytail ladder.** YAGNI / reuse / stdlib / minimal — never cut
    validation, error handling, security, or provenance.
 6. **Provenance required.** `AcquisitionMetrics` + manifests recorded per run.
-7. **Deterministic termination.** Every run has a bounded budget and an
-   explicit `TerminationReason`.
+7. **Deterministic termination.** `AcquisitionRuntime` runs end with an
+   explicit `TerminationReason` + `Outcome` classification under
+   item/page/retry budgets. Other entry points (legacy collector scripts,
+   harness agent) are not uniformly bounded or classified yet.
 
 ## Working practices
 
