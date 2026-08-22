@@ -25,6 +25,16 @@ POLICY_MODEL_VERSION = "1.0.0"
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 
 
+def is_valid_identifier(name) -> bool:
+    """True when `name` is a well-formed lowercase dot-namespaced identifier.
+
+    Shared structural rule for capability names, actor ids and provider names.
+    Structural ONLY — membership in any vocabulary is a policy concern and is
+    NOT checked here (the vocabulary is intentionally extensible).
+    """
+    return isinstance(name, str) and bool(_NAME_RE.match(name))
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
