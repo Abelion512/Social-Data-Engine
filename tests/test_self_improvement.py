@@ -136,6 +136,8 @@ def test_self_healing_already_stable_skips_loop():
     assert calls["collect"] == 0, "should skip collect when already stable"
     assert result.coverage == 1.0
     assert len(runner.history) == 0
+    assert runner.last_outcome == "task_complete"
+    (ROOT / "state" / "loops" / "v1.json").unlink(missing_ok=True)
     print("PASS: test_self_healing_already_stable_skips_loop")
 
 
@@ -170,6 +172,11 @@ def test_self_healing_loop_then_stabilize():
     assert len(runner.history) == 2
     # plan actions should include REMEDIAL actions, not NO_CHANGE
     assert runner.history[0].actions != [Action.NO_CHANGE]
+    assert runner.last_outcome == "task_complete"
+    (ROOT / "state" / "loops" / "v1.json").unlink(missing_ok=True)
+    mfile = ROOT / "data" / "manifests" / "v1.improve.jsonl"
+    if mfile.exists():
+        mfile.unlink()
     print("PASS: test_self_healing_loop_then_stabilize")
 
 
@@ -200,10 +207,12 @@ def test_self_healing_budget_exhausted():
     assert calls["collect"] == 2, f"expected 2, got {calls['collect']}"
     assert result.coverage == 0.70
     assert len(runner.history) == 2
+    assert runner.last_outcome == "budget_exhausted"
     # manifest file should be written
     mfile = ROOT / "data" / "manifests" / "v1.improve.jsonl"
     assert mfile.exists(), "improvement manifest not written"
     mfile.unlink()
+    (ROOT / "state" / "loops" / "v1.json").unlink(missing_ok=True)
     print("PASS: test_self_healing_budget_exhausted")
 
 

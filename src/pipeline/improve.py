@@ -40,7 +40,16 @@ from enum import Enum
 from typing import List, Optional, Callable, Dict, Any
 import logging
 import time
+import uuid
 
+from src.runtime.checkpoint import CheckpointCorrupt  # re-exported for callers
+from src.runtime.loop_state import (
+    LOOP_STATE_SCHEMA_VERSION,
+    LoopOutcome,
+    LoopState,
+    LoopStateStore,
+    lifecycle_for_loop_outcome,
+)
 from src.schema.canonical import Observation
 
 logger = logging.getLogger(__name__)
@@ -79,7 +88,9 @@ class Action(str, Enum):
     SWITCH_PROVIDER = "switch_provider"    # ganti driver (camoufox ↔ nodriver ↔ playwright)
     EXPAND_REPLIES  = "expand_replies"     # naikkan kedalaman recursive reply expand
     RECOVER_PARTIAL = "recover_partial"    # re-collect saja reply yang missing
-    ADJUST_GATE     = "adjust_gate"        # promosikan/relax quality threshold setelah re-collect
+    ADJUST_GATE     = "adjust_gate"        # TIGHTEN-ONLY quality threshold raise (SDD invariant 3:
+                                           # loosening an acceptance criterion is intent mutation
+                                           # and requires external configuration — never autonomous)
     REQUEUE         = "requeue"            # beri upa kesempatan lain, atau abandone gracefully
     NO_CHANGE       = "no_change"          # tidak perlu aksi
 
@@ -188,6 +199,8 @@ class SelfHealingPipeline:
         Batas rekursi (safety — selalu berterminasi).
     """
 
+    MAX_ITER_CAP = 10  # sane ceiling: callers may lower, never exceed (FR-LOOP-001)
+
     def __init__(
         self,
         base_dir,
@@ -196,15 +209,27 @@ class SelfHealingPipeline:
         planner: Optional[ImprovementPlanner] = None,
         max_iter: int = 3,
         sleep_between: float = 1.0,
+        state_dir=None,
     ):
         from pathlib import Path
+        if not isinstance(max_iter, int) or max_iter < 1:
+            raise ValueError(f"max_iter must be a positive int, got {max_iter!r}")
+        if max_iter > self.MAX_ITER_CAP:
+            raise ValueError(
+                f"max_iter={max_iter} exceeds the sane cap {self.MAX_ITER_CAP} "
+                "(FR-LOOP-001); lower the value"
+            )
         self.base_dir = Path(base_dir)
         self.collector = collector
         self.processor = processor
         self.planner = planner or ImprovementPlanner()
         self.max_iter = max_iter
         self.sleep_between = sleep_between
+        self.state_dir = Path(state_dir) if state_dir else self.base_dir / "state" / "loops"
         self.history: List[ImprovementPlan] = []
+        # populated by run(): machine-readable terminal classification
+        self.last_outcome: Optional[str] = None
+        self.last_job_id: Optional[str] = None
 
     # ── hooks (dapat di-override subclass / mock) ────────────────────────────
 
@@ -238,55 +263,176 @@ class SelfHealingPipeline:
     # ── main loop ───────────────────────────────────────────────────────────
 
     def run(self, video_id: str, url: str) -> PipelineMetrics:
-        """Run the self-improvement loop untuk satu video. Selalu berterminasi."""
+        """Run the self-improvement loop untuk satu video. Selalu berterminasi.
+
+        Durable + resumable: the loop position persists in
+        ``<base_dir>/state/loops/<video_id>.json`` (atomic tmp+replace). A
+        re-invocation with existing state RESUMES that loop under the same
+        ``job_id`` and skips iterations already recorded in the improve
+        manifest — a crash between dataset write and manifest append can
+        never cause the same iteration to execute twice. A corrupt state
+        file raises ``CheckpointCorrupt`` (fail-closed; never silently
+        restarted — recovery is a human decision, Constitution §3).
+
+        The terminal classification lands on ``self.last_outcome`` as one of
+        ``LoopOutcome.ALL`` and maps additively into the run lifecycle via
+        ``lifecycle_for_loop_outcome`` (FR-RUN-001 discipline).
+        """
+        store = LoopStateStore(self.state_dir / f"{video_id}.json")
+        saved = store.load()  # CheckpointCorrupt propagates — fail closed
+        if saved is not None:
+            job_id = saved.job_id
+            start_iteration = saved.next_iteration
+            logger.info("[improve] %s resuming job %s at iter %d",
+                        video_id, job_id, start_iteration)
+        else:
+            job_id = uuid.uuid4().hex[:12]
+            start_iteration = 1
+
         m = self.processor([], self.base_dir, video_id=video_id)  # observe existing
         if self.planner.is_stable(m):
             logger.info("[improve] %s already stable (coverage %.0f%%)", video_id, m.coverage * 100)
-            return m
+            return self._finish(video_id, job_id, start_iteration, {}, m,
+                                LoopOutcome.TASK_COMPLETE)
 
-        for i in range(1, self.max_iter + 1):
-            plan = self.planner.plan(m, iteration=i)
-            self.history.append(plan)
-            if plan.actions == [Action.NO_CHANGE]:
-                logger.info("[improve] %s no-op at iter %d", video_id, i)
-                break
-            logger.info("[improve] %s iter %d: %s", video_id, i,
-                        ", ".join(a.value for a in plan.actions))
+        recorded = self._recorded_iterations(video_id, job_id)
+        overrides: Dict[str, Any] = {}
 
-            start = time.time()
-            overrides = self._apply(plan)
-            observations = self._collect(video_id, url, overrides)
-            elapsed = time.time() - start
-            m_new = self.processor(observations, self.base_dir,
-                                   video_id=video_id, iteration=i, elapsed=elapsed)
+        try:
+            for i in range(start_iteration, self.max_iter + 1):
+                if i in recorded:
+                    logger.info("[improve] %s iter %d already recorded — skip", video_id, i)
+                    continue
 
-            self._record_plan(plan, m_new)
+                plan = self.planner.plan(m, iteration=i)
+                self.history.append(plan)
+                if plan.actions == [Action.NO_CHANGE]:
+                    logger.info("[improve] %s no-op at iter %d", video_id, i)
+                    return self._finish(video_id, job_id, i, overrides, m,
+                                        LoopOutcome.PARTIAL_SUCCESS)
+                logger.info("[improve] %s iter %d: %s", video_id, i,
+                            ", ".join(a.value for a in plan.actions))
 
-            if self.planner.is_stable(m_new):
-                logger.info("[improve] %s stabilized at iter %d", video_id, i)
-                return m_new
-            if not self.planner.is_improving(m, m_new):
-                logger.warning("[improve] %s no improvement at iter %d — stop", video_id, i)
-                return m_new
+                start = time.time()
+                overrides = self._apply(plan)
+                observations = self._collect(video_id, url, overrides)
+                elapsed = time.time() - start
+                m_new = self.processor(observations, self.base_dir,
+                                       video_id=video_id, iteration=i, elapsed=elapsed)
 
-            m = m_new
-            time.sleep(self.sleep_between)
+                # Evidence first (manifest), then durable position (state).
+                # Crash before the manifest line: iteration re-executes, but
+                # dataset writes are id-dedup'd so no duplication occurs.
+                # Crash after it: resume skips this iteration via `recorded`.
+                self._record_plan(plan, m_new, job_id=job_id)
+                self._save_state(video_id, job_id, i + 1, overrides, m_new)
+
+                if self.planner.is_stable(m_new):
+                    logger.info("[improve] %s stabilized at iter %d", video_id, i)
+                    return self._finish(video_id, job_id, i + 1, overrides, m_new,
+                                        LoopOutcome.TASK_COMPLETE)
+                if not self.planner.is_improving(m, m_new):
+                    logger.warning("[improve] %s no improvement at iter %d — stop", video_id, i)
+                    return self._finish(video_id, job_id, i + 1, overrides, m_new,
+                                        LoopOutcome.PARTIAL_SUCCESS)
+
+                m = m_new
+                time.sleep(self.sleep_between)
+        except Exception:
+            # Fail loudly but leave an inspectable terminal trace (fail-closed,
+            # Constitution §3: failure must still checkpoint).
+            self.last_outcome = LoopOutcome.FAILED
+            self.last_job_id = job_id
+            try:
+                self._save_state(video_id, job_id, start_iteration, overrides, m,
+                                 outcome=LoopOutcome.FAILED)
+            except Exception:
+                pass
+            raise
 
         logger.warning("[improve] %s budget exhausted (%d iter) — best effort",
                        video_id, self.max_iter)
-        return m
+        return self._finish(video_id, job_id, self.max_iter + 1, overrides, m,
+                            LoopOutcome.BUDGET_EXHAUSTED)
 
-    def _record_plan(self, plan: ImprovementPlan, m: PipelineMetrics) -> None:
-        """Persist improvement provenance ke manifest (auditable)."""
+    def _record_plan(self, plan: ImprovementPlan, m: PipelineMetrics,
+                     job_id: str = "") -> None:
+        """Persist improvement provenance ke manifest (auditable).
+
+        Additive fields `job_id` and `policy_model_version` make iterations
+        idempotency-keyable and version-attributable (audit P1-1/P1-3).
+        Legacy readers ignore unknown keys.
+        """
         import json
-        mfile = self.base_dir / "data" / "manifests" / f"{plan.video_id}.improve.jsonl"
+        from src.policy.models import POLICY_MODEL_VERSION
+        mfile = self.manifest_path(plan.video_id)
         mfile.parent.mkdir(parents=True, exist_ok=True)
         with mfile.open("a", encoding="utf-8") as f:
             f.write(json.dumps({
                 "iteration": plan.iteration,
+                "job_id": job_id,
                 "actions": [a.value for a in plan.actions],
                 "rationale": plan.rationale,
                 "metrics": m.__dict__ if hasattr(m, "__dict__") else None,
+                "policy_model_version": POLICY_MODEL_VERSION,
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ",
                                            time.gmtime()),
             }, ensure_ascii=False) + "\n")
+
+    # ── durable loop position (LoopState) ──────────────────────────────────
+
+    def manifest_path(self, video_id: str):
+        return self.base_dir / "data" / "manifests" / f"{video_id}.improve.jsonl"
+
+    def _recorded_iterations(self, video_id: str, job_id: str) -> set:
+        """Iteration numbers already executed for this loop.
+
+        Matches lines with the same job_id, plus legacy lines without a
+        job_id field (pre-dating idempotency keys — conservatively treated
+        as belonging to this video's loop).
+        """
+        import json
+        recorded: set = set()
+        mfile = self.manifest_path(video_id)
+        if not mfile.exists():
+            return recorded
+        with mfile.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue  # torn tail line from a crash mid-append: ignorable
+                if d.get("job_id", job_id) != job_id:
+                    continue
+                it = d.get("iteration")
+                if isinstance(it, int):
+                    recorded.add(it)
+        return recorded
+
+    def _save_state(self, video_id: str, job_id: str, next_iteration: int,
+                    overrides: Dict[str, Any], metrics: PipelineMetrics,
+                    outcome: str = "") -> None:
+        store = LoopStateStore(self.state_dir / f"{video_id}.json")
+        store.save(LoopState(
+            video_id=video_id,
+            job_id=job_id,
+            next_iteration=next_iteration,
+            applied_overrides=dict(overrides),
+            last_metrics=vars(metrics) if hasattr(metrics, "__dict__") else {},
+            outcome=outcome,
+        ))
+
+    def _finish(self, video_id: str, job_id: str, next_iteration: int,
+                overrides: Dict[str, Any], m: PipelineMetrics,
+                outcome: str) -> PipelineMetrics:
+        """Record the terminal classification durably, then surface it."""
+        self._save_state(video_id, job_id, next_iteration, overrides, m,
+                         outcome=outcome)
+        self.last_outcome = outcome
+        self.last_job_id = job_id
+        logger.info("[improve] %s finished: %s (%s)", video_id, outcome,
+                    lifecycle_for_loop_outcome(outcome))
+        return m
