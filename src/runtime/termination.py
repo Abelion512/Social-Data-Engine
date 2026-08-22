@@ -65,3 +65,51 @@ def classify_termination(reason: str) -> str:
     if not reason:
         return Outcome.PERMANENT_FAILURE
     return _REASON_TO_OUTCOME.get(reason, Outcome.PERMANENT_FAILURE)
+
+
+class RunLifecycle:
+    """Actor-run lifecycle states (harness-owned vocabulary).
+
+    Only states with an actual consumer exist:
+      - CREATED   : input validated + context built, runtime not yet invoked
+                    (transient, in-memory — nothing persists in this state)
+      - STARTED   : the runtime began executing (persisted in checkpoints so a
+                    crashed run is visibly 'started', never silently ambiguous)
+      - COMPLETED : terminal — planned stop (success or configured cap reached)
+      - FAILED    : terminal — error-classified stop (retryable/permanent failure,
+                    incl. explicit recovery failures like `checkpoint_corrupt`)
+      - TERMINATED: terminal — externally stopped (auth block / pagination stall);
+                    the actor did not fail and did not complete its work
+
+    There is deliberately no SUSPENDED/PENDING/APPROVAL state: suspension via
+    REQUIRE_APPROVAL is PLANNED (docs/architecture/POLICY-ARCHITECTURE.md) and
+    gets added when something consumes it.
+    """
+    CREATED = "created"
+    STARTED = "started"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    TERMINATED = "terminated"
+
+    ALL = (CREATED, STARTED, COMPLETED, FAILED, TERMINATED)
+
+
+# Outcome → terminal lifecycle state. Total over Outcome.ALL — every outcome
+# classifies; unknown outcomes fail visibly as FAILED (fail-closed).
+_OUTCOME_TO_LIFECYCLE = {
+    Outcome.SUCCESS: RunLifecycle.COMPLETED,
+    Outcome.CAP_REACHED: RunLifecycle.COMPLETED,       # cap = configured intent
+    Outcome.AUTH_BLOCKED: RunLifecycle.TERMINATED,
+    Outcome.PAGINATION_STALL: RunLifecycle.TERMINATED,
+    Outcome.RETRYABLE_FAILURE: RunLifecycle.FAILED,
+    Outcome.PERMANENT_FAILURE: RunLifecycle.FAILED,
+}
+
+
+def lifecycle_for_outcome(outcome: str) -> str:
+    """Map an `Outcome` category to its terminal lifecycle state.
+
+    Unknown/None outcomes map to FAILED (fail-closed), mirroring
+    `classify_termination`'s treatment of unknown reasons.
+    """
+    return _OUTCOME_TO_LIFECYCLE.get(outcome, RunLifecycle.FAILED)

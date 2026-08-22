@@ -24,7 +24,7 @@ from src.runtime.checkpoint import CheckpointStore, CheckpointCorrupt
 from src.runtime.dataset import JsonlDataset
 from src.runtime.actor import AcquisitionActor, PageResult
 from src.runtime.state import PaginationState
-from src.runtime.termination import classify_termination
+from src.runtime.termination import classify_termination, lifecycle_for_outcome, RunLifecycle
 
 
 @dataclass
@@ -41,7 +41,12 @@ class RunOptions:
 
 @dataclass
 class RunSummary:
-    """Final provenance record for one run invocation."""
+    """Final provenance record for one run invocation.
+
+    actor_id/actor_version/lifecycle_state are additive provenance fields
+    (actor/harness contract): legacy actors without an identity record empty
+    strings; lifecycle_state is the terminal RunLifecycle classification.
+    """
     run_id: str = ""
     job_id: str = ""
     provider: str = ""
@@ -53,6 +58,9 @@ class RunSummary:
     metrics: dict = field(default_factory=dict)
     dataset_path: str = ""
     checkpoint_path: str = ""
+    actor_id: str = ""
+    actor_version: str = ""
+    lifecycle_state: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -67,6 +75,9 @@ class RunSummary:
             "metrics": self.metrics,
             "dataset_path": self.dataset_path,
             "checkpoint_path": self.checkpoint_path,
+            "actor_id": self.actor_id,
+            "actor_version": self.actor_version,
+            "lifecycle_state": self.lifecycle_state,
         }
 
 
@@ -106,18 +117,22 @@ class AcquisitionRuntime:
                     "checkpoint explicitly"
                 )
                 dataset.load_seen()  # read-only replay: honest items_seen
+                outcome = classify_termination("checkpoint_corrupt")
                 return RunSummary(
                     run_id=ctx.run_id,
                     job_id=ctx.job_id,
                     provider=ctx.provider,
                     resumed=False,
                     termination_reason="checkpoint_corrupt",
-                    outcome=classify_termination("checkpoint_corrupt"),
+                    outcome=outcome,
                     items_written=0,
                     items_seen=len(dataset.seen_ids),
                     metrics={},
                     dataset_path=str(ctx.dataset_path),
                     checkpoint_path=str(ctx.checkpoint_path),
+                    actor_id=getattr(actor, "actor_id", ""),
+                    actor_version=getattr(actor, "actor_version", ""),
+                    lifecycle_state=lifecycle_for_outcome(outcome),
                 )
             pag = prev.get("pagination")
             if pag:
@@ -146,7 +161,7 @@ class AcquisitionRuntime:
                     # call, no dataset write, reason preserved, real item count.
                     self._print(f"[runtime] run {ctx.job_id} already terminated: "
                                 f"{state.termination_reason}")
-                    return self._summary(ctx, dataset, state, 0, resumed)
+                    return self._summary(ctx, dataset, state, 0, resumed, actor)
 
         if state is None:
             state = PaginationState(
@@ -254,7 +269,7 @@ class AcquisitionRuntime:
         state.metrics.duration_seconds = round(time.monotonic() - started, 3)
         self._commit(ckpt, ctx, state, dataset, status="done")
 
-        return self._summary(ctx, dataset, state, items_written, resumed)
+        return self._summary(ctx, dataset, state, items_written, resumed, actor)
 
     # ── internals ─────────────────────────────────────────────────────────
     def _commit(
@@ -272,6 +287,13 @@ class AcquisitionRuntime:
             "target": ctx.target,
             "started_at": ctx.started_at,
             "status": status,
+            # additive lifecycle provenance: "started" while executing, the
+            # terminal RunLifecycle state on the final commit. Legacy readers
+            # ignore unknown keys; legacy values ("running"/"done") unchanged.
+            "lifecycle": (
+                RunLifecycle.STARTED if status == "running"
+                else lifecycle_for_outcome(classify_termination(state.termination_reason))
+            ),
             "updated_at": utc_now(),
             "items_seen": len(dataset.seen_ids),
             "dataset_path": str(ctx.dataset_path),
@@ -287,18 +309,23 @@ class AcquisitionRuntime:
         state: PaginationState,
         items_written: int,
         resumed: bool,
+        actor: Optional[AcquisitionActor] = None,
     ) -> RunSummary:
         reason = state.termination_reason or "finished"
+        outcome = classify_termination(reason)
         return RunSummary(
             run_id=ctx.run_id,
             job_id=ctx.job_id,
             provider=ctx.provider,
             resumed=resumed,
             termination_reason=reason,
-            outcome=classify_termination(reason),
+            outcome=outcome,
             items_written=items_written,
             items_seen=len(dataset.seen_ids),
             metrics=state.metrics.to_dict(),
             dataset_path=str(ctx.dataset_path),
             checkpoint_path=str(ctx.checkpoint_path),
+            actor_id=getattr(actor, "actor_id", ""),
+            actor_version=getattr(actor, "actor_version", ""),
+            lifecycle_state=lifecycle_for_outcome(outcome),
         )

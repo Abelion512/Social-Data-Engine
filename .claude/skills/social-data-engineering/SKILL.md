@@ -49,6 +49,7 @@ Research / ML / Export
 | Checkpoint / recoverable state | PARTIALLY IMPLEMENTED | `src/runtime/checkpoint.py` — atomic writes, durability ordering, resume reconciliation, and fail-closed corrupt-checkpoint handling (explicit terminal `checkpoint_corrupt`, never silent fresh-run) proven for `AcquisitionRuntime` only; legacy pipeline persistence is separate and ad-hoc |
 | Provider-independent runtime core | IMPLEMENTED | `docs/RUNTIME.md §B`; runtime imports stdlib + `src.runtime` only |
 | Provider adapters (TikTok) | IMPLEMENTED | `src/providers/` behind `src/providers/base.py` |
+| Harness / actor contract | PARTIALLY IMPLEMENTED | `src/runtime/harness.py` — `ActorHarness` validates identity + DECLARED capabilities (structural only, recorded into provenance), `RunInput` fail-closed + serializable, `RunLifecycle` states; NO evaluation/grant/deny, no sandbox; production TikTok page-source wiring pending |
 | Normalization / dedup / quality | IMPLEMENTED | `src/schema/`, `src/pipeline/` (deterministic tests green) |
 | Export (manifest / mark / CSV) | PARTIALLY IMPLEMENTED | `src/export/` modules exist and are wired into scripts; no dedicated deterministic tests prove their output |
 | Provenance (metrics + manifests) | PARTIALLY IMPLEMENTED | `Provenance`/`Confidence` schema classes declared; `AcquisitionMetrics` persisted in checkpoints/`RunSummary`; manifests are written only by the legacy improve loop — NOT universally by every acquisition path |
@@ -80,6 +81,10 @@ doc that proves each claim. Never describe a PLANNED control as active.
    explicit `TerminationReason` + `Outcome` classification under
    item/page/retry budgets. Other entry points (legacy collector scripts,
    harness agent) are not uniformly bounded or classified yet.
+8. **Capability declarations are vocabulary.** `ActorHarness` validates
+   declaration STRUCTURE only and records it into provenance; it never
+   grants, denies, or evaluates. Do not describe declared capabilities as
+   enforced or granted.
 
 ## Working practices
 

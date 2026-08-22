@@ -6,11 +6,17 @@ A future platform implements ONLY this; it never touches checkpointing,
 retry budgets, metrics, persistence ordering, or termination semantics.
 The contract is intentionally small (avoid over-generalization):
 
-    - provider_name : identity for provenance
-    - id_key        : which record field uniquely identifies an item
-    - initial_cursor: starting cursor (default 0)
-    - fetch_page    : fetch ONE page for a cursor → PageResult
-    - item_id       : extract the unique id from one raw item
+    - actor_id       : namespaced identity for provenance ("acquisition.tiktok")
+    - actor_version  : version of THIS actor implementation (run metadata)
+    - provider_name  : platform identity for provenance/routing
+    - id_key         : which record field uniquely identifies an item
+    - capabilities() : DECLARED Capabilities (src/policy vocabulary) —
+                       declaration/configuration ONLY. Nothing evaluates,
+                       grants or denies them yet; a declared capability is
+                       not a granted one (Constitution §5 — DOCUMENTED ONLY).
+    - initial_cursor : starting cursor (default 0)
+    - fetch_page     : fetch ONE page for a cursor → PageResult
+    - item_id        : extract the unique id from one raw item
 
 Anything not expressible here (multi-path browser capture, auth flows,
 payload parsing quirks) is provider code by definition and stays out of
@@ -19,8 +25,9 @@ the runtime.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+from src.policy.models import Capability
 from src.runtime.context import RunContext
 
 
@@ -44,6 +51,22 @@ class AcquisitionActor:
 
     provider_name: str = "unknown"
     id_key: str = "item_id"
+    # Identity defaults are EMPTY so pre-contract actors keep working through
+    # the raw runtime. The ActorHarness treats empty identity as invalid
+    # (fail-closed); the raw runtime merely records what is declared.
+    actor_id: str = ""
+    actor_version: str = ""
+
+    def capabilities(self) -> Tuple[Capability, ...]:
+        """Declared capabilities — policy VOCABULARY only, never evaluated.
+
+        Default is the empty declaration: an actor may declare zero
+        capabilities and still run (nothing consumes declarations yet).
+        Override with the exact `Capability` constants the actor's provider
+        behavior requires; duplicates are a declaration bug and are rejected
+        by the harness.
+        """
+        return ()
 
     def initial_cursor(self) -> Union[int, str]:
         return 0

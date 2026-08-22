@@ -1,10 +1,13 @@
 # Policy Architecture (future enforcement pipeline)
 
-**Status: PLANNED.** This document defines where policy enforcement will
-integrate. It is not implemented. What exists today is the vocabulary in
-`src/policy/models.py` (`Capability`, `CapabilityRequest`, `PolicyDecision`,
-`ExecutionBudget`) and nothing else — no evaluator, no sandbox, no approval
-workflow.
+**Status: PLANNED (enforcement); declaration surface EXISTS.** This document
+defines where policy enforcement will integrate. Evaluation is not implemented:
+no evaluator, no sandbox, no approval workflow. What exists today is the
+vocabulary in `src/policy/models.py` (`Capability`, `CapabilityRequest`,
+`PolicyDecision`, `ExecutionBudget`) plus its structural DECLARATION at the
+actor boundary — `AcquisitionActor.capabilities()` validated by
+`ActorHarness` (`src/runtime/harness.py`) and recorded into run provenance.
+Declaration is configuration only: a declared capability is NOT a granted one.
 
 ## The pipeline
 
@@ -32,7 +35,7 @@ Policy evaluation again    re-checked every iteration — grants never persist p
 
 | # | Where | What happens |
 |---|---|---|
-| 1 | `AcquisitionActor` subclasses (`src/runtime/actor.py`) | Actor declares `required_capabilities()` — e.g. `network.fetch`, `browser.automate`. Providers declare; the runtime never hardcodes platform verbs. |
+| 1 | `AcquisitionActor` subclasses (`src/runtime/actor.py`) | **EXISTS (declaration only):** actors override `capabilities()` returning `Capability` instances; `ActorHarness.validate_declared_capabilities` checks structure (duplicates/non-Capability rejected) and records names into checkpoint provenance. Nothing evaluates them yet. |
 | 2 | `AcquisitionRuntime.run()` loop (`src/runtime/engine.py`), immediately before `actor.fetch_page(...)` (step 1 of the loop) | Evaluate `CapabilityRequest(actor_id=actor.provider_name, capability=..., resource=ctx.target, purpose=...)`. `DENY` ⇒ terminate with a new reason string (see below). `REQUIRE_APPROVAL` ⇒ checkpoint + suspend. |
 | 3 | `RunOptions` (`src/runtime/engine.py`) | Gains a budget/profile field carrying an `ExecutionBudget`. Today's `max_items`/`max_pages`/retry budgets remain authoritative for their axes; new axes (wall-clock, network calls) activate only when a budget is supplied. |
 | 4 | Dataset append path (`src/runtime/dataset.py::JsonlDataset.append`) | Emits audit/provenance events alongside writes (collector version, run id, policy model version). Raw store stays append-only. |

@@ -101,7 +101,7 @@ intentionally differ.
 
 ## D. Tests
 
-`tests/test_acquisition_runtime.py` — 9 deterministic tests (stdlib, no browser):
+`tests/test_acquisition_runtime.py` — 15 deterministic tests (stdlib, no browser):
 1. actor can start a run → dataset + atomic (tmp+replace) checkpoint written,
    restorable on resume
 2. resume continues from cursor with zero duplicates
@@ -115,6 +115,10 @@ intentionally differ.
 9. resuming an ALREADY-COMPLETED checkpoint: provider not called, dataset
    untouched, termination reason preserved, `items_seen` equals the persisted
    unique record count
+10–15. hard `max_items` cap semantics (oversized page, remaining-cap resume,
+   dupes-don't-consume-cap, cap↔dataset agreement) + simulated crash recovery
+   at the commit boundary (dataset-before-checkpoint ordering, replay without
+   duplicates)
 
 ## E. Migration of TikTok onto the runtime
 
@@ -173,3 +177,68 @@ python -m py_compile (all runtime/tiktok/collector/test files)  OK
   an error string merely *containing* "block"/"verify"/"captcha"/"security" is
   classified terminal `auth_blocked` instead of retryable fetch failure.
   Providers should pass precise `error_type` values to avoid false positives.
+
+## H. Harness / Actor Contract (added after the runtime core)
+
+`src/runtime/harness.py` is the optional fail-closed front door above the raw
+runtime. It adds identity, input, declared capabilities, lifecycle and output
+expectations WITHOUT wrapping execution — `ActorHarness.run()` returns the
+runtime's own `RunSummary`, enriched with actor provenance.
+
+```
+Harness / Actor      declares identity + capabilities + input
+      ↓
+RunInput             validated, serializable (fail-closed, non-secret by contract)
+      ↓
+AcquisitionRuntime   budgets · retry · checkpoint · persistence · termination · metrics
+      ↓
+Output               JsonlDataset (unchanged) + RunSummary (+actor provenance) + checkpoint (+lifecycle key)
+```
+
+### Exact boundary
+
+| Layer | OWNS | Does NOT own |
+|---|---|---|
+| **HARNESS** (`src/runtime/harness.py`) | actor lifecycle vocabulary, input validation, identity binding, DECLARED-capability validation (structural only), actor metadata → provenance | budgets, retry, persistence, termination decisions |
+| **RUNTIME** (`src/runtime/engine.py`) | execution budgets, retry, checkpoint/resume, persistence ordering, termination classification, metrics | actor identity semantics, capability meaning |
+| **PROVIDER/ACTOR** (`src/providers/*`) | fetching ONE page, payload parsing quirks, session/auth behavior | runtime loop, checkpoint format |
+
+### Contract surface
+
+- **Identity:** `AcquisitionActor.actor_id` / `.actor_version`. Defaults are
+  empty so pre-contract actors keep working through the RAW runtime (empty
+  provenance); the HARNESS rejects them fail-closed.
+- **Input:** `RunInput` — target URL + free-form payload, config projected onto
+  `RunOptions` axes (unknown axes rejected), actor identity/version bound
+  against the actor object before execution. Frozen + serializable.
+- **Declared capabilities:** `actor.capabilities()` returns policy-model
+  `Capability` instances (vocabulary/configuration ONLY — nothing evaluates,
+  grants or denies). Zero capabilities is valid; duplicates and non-Capability
+  entries are rejected. Names are recorded into `checkpoint.target.capabilities`
+  with `policy_model_version` — provenance, not enforcement.
+- **Lifecycle:** `RunLifecycle` = CREATED / STARTED / COMPLETED / FAILED /
+  TERMINATED. Terminal state derives deterministically from the existing
+  `Outcome` taxonomy (`lifecycle_for_outcome`): success+cap→COMPLETED,
+  auth-block+stall→TERMINATED, failures→FAILED. Persisted additively as the
+  checkpoint `lifecycle` key (legacy `status` values untouched).
+- **Output expectations:** unchanged `JsonlDataset`; `RunSummary` gains
+  additive `actor_id` / `actor_version` / `lifecycle_state`.
+
+### TikTok migration status
+
+`src/providers/tiktok_actor.py::TikTokAcquisitionActor` carries the TikTok path's
+contract surface (actor_id=`acquisition.tiktok`, actor_version=COLLECTOR_VERSION,
+declares `network.fetch` + `browser.automate`, converts raw API pages via
+`tiktok_api_page_to_page_result`). The live browser loop remains authoritative
+(§G stands): the page source is INJECTED and the production browser-backed wiring
+lands in a follow-up PR. Deterministic proof lives in
+`tests/test_actor_harness.py` (18 tests).
+
+### Unsupported cases (documented, not solved)
+
+- Resume through the harness requires a STABLE explicit `job_id` — otherwise each
+  invocation derives a timestamped one and looks at a different checkpoint path.
+- Capability names are NOT checked against a closed vocabulary (open by design);
+  membership enforcement belongs to the future evaluator.
+- No SUSPENDED/APPROVAL lifecycle state — REQUIRE_APPROVAL routing is PLANNED.
+- Fresh-run-over-populated-dataset limitation (§G) applies unchanged to harness runs.
