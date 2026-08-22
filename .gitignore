@@ -52,6 +52,10 @@ data/manifests/*
 data/benchmarks/
 *.tmp
 
+# Claude Code: skills/commands are tracked; local state and credentials are not
+.claude/settings.local.json
+.claude/.credentials.json
+
 # IDE
 .vscode/
 .idea/

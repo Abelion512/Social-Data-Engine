@@ -19,7 +19,7 @@ from src.runtime.context import RunContext, utc_now
 from src.runtime.termination import TerminationReason, Outcome, classify_termination
 from src.runtime.metrics import AcquisitionMetrics
 from src.runtime.state import PaginationState, PaginationDiagnostic
-from src.runtime.checkpoint import CheckpointStore
+from src.runtime.checkpoint import CheckpointStore, CheckpointCorrupt
 from src.runtime.dataset import JsonlDataset, append_records, load_seen_ids
 from src.runtime.actor import AcquisitionActor, PageResult
 from src.runtime.engine import AcquisitionRuntime, RunOptions, RunSummary
@@ -34,6 +34,7 @@ __all__ = [
     "PaginationState",
     "PaginationDiagnostic",
     "CheckpointStore",
+    "CheckpointCorrupt",
     "JsonlDataset",
     "append_records",
     "load_seen_ids",
