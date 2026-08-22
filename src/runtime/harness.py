@@ -6,7 +6,11 @@ Owns (HARNESS boundary — see docs/RUNTIME.md §H):
     - actor lifecycle bookkeeping (CREATED → STARTED → terminal state)
     - input validation (RunInput is fail-closed and serializable)
     - declared-capability validation (STRUCTURAL ONLY — vocabulary/config,
-      never evaluated; Constitution §5 is still DOCUMENTED ONLY)
+      never evaluated here; evaluation lives in src/policy/evaluator.py)
+    - POLICY GATE (v0): when a PolicyProfile is supplied, every declared
+      capability is evaluated by the deterministic deny-by-default
+      PolicyEvaluator BEFORE the runtime is invoked. DENY / REQUIRE_APPROVAL
+      ⇒ the run never executes and leaves NO checkpoint/dataset side effects.
     - actor metadata propagation into run provenance (checkpoint + summary)
 
 Delegates WITHOUT modification to:
@@ -18,24 +22,34 @@ This module adds NO new abstraction layer around the runtime: `run()` ends by
 returning the runtime's own `RunSummary`, enriched with actor provenance.
 A second provider needs nothing here — only an `AcquisitionActor` subclass.
 
-Non-goals (explicitly out of scope): policy evaluation, sandboxing, process
-isolation, scheduling, autonomous loops, secret transport.
+Non-goals (explicitly out of scope): sandboxing, process isolation,
+scheduling, autonomous loops, secret transport, approval workflows
+(REQUIRE_APPROVAL suspends the run; no approval store exists yet).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
-from src.policy.models import POLICY_MODEL_VERSION, Capability, is_valid_identifier
+from src.policy.models import (
+    POLICY_MODEL_VERSION,
+    Capability,
+    CapabilityRequest,
+    PolicyDecision,
+    is_valid_identifier,
+)
+from src.policy.evaluator import PolicyDecisionRecord, PolicyEvaluator, PolicyProfile
 from src.runtime.context import RunContext
 from src.runtime.engine import AcquisitionRuntime, RunOptions, RunSummary
 from src.runtime.actor import AcquisitionActor
+from src.runtime.termination import classify_termination, lifecycle_for_outcome
 
 __all__ = ["RunInput", "ActorHarness"]
 
 # Keys the harness itself reserves inside RunContext.target provenance.
 _RESERVED_TARGET_KEYS = frozenset({
     "url", "actor_id", "actor_version", "capabilities", "policy_model_version",
+    "policy_version",
 })
 
 _IDENTIFIER_DOC = "lowercase dot-namespaced identifier (e.g. 'acquisition.tiktok')"
@@ -143,11 +157,19 @@ class ActorHarness:
     def __init__(self, runtime: Optional[AcquisitionRuntime] = None,
                  print_fn=print,
                  state_dir: str = "state/runs",
-                 data_dir: str = "data/runs"):
+                 data_dir: str = "data/runs",
+                 policy: Optional[PolicyProfile] = None):
         self._runtime = runtime or AcquisitionRuntime(print_fn=print_fn)
         self._print = print_fn
         self.state_dir = state_dir
         self.data_dir = data_dir
+        # Policy gate configuration. None = NO evaluator installed: the
+        # documented trusted-operator mode (D-006) — behavior unchanged for
+        # existing callers. Supplying a PolicyProfile switches the harness
+        # into ENFORCED mode: deny-by-default evaluation runs BEFORE any
+        # execution. There is deliberately no way to pass a profile that
+        # allows-by-default — the evaluator itself has no such mode.
+        self._policy_profile = policy
 
     # ── public entry point ────────────────────────────────────────────────
     async def run(self, actor: AcquisitionActor, run_input: RunInput,
@@ -179,6 +201,8 @@ class ActorHarness:
             "capabilities": [c.name for c in capabilities],
             "policy_model_version": POLICY_MODEL_VERSION,
         }
+        if self._policy_profile is not None:
+            target_meta["policy_version"] = self._policy_profile.version
         target_meta.update(run_input.payload)
 
         ctx = RunContext.create(
@@ -190,6 +214,27 @@ class ActorHarness:
             data_dir=self.data_dir,
             target_meta=target_meta,
         )
+
+        # POLICY GATE — enforcement point per SDD §2 ownership matrix
+        # ("Gating: Harness"). Runs AFTER context construction but BEFORE the
+        # runtime is invoked — strictly earlier than the architecture-doc
+        # "insertion point 2" sketch (engine loop, pre-fetch_page): a non-ALLOW
+        # decision therefore returns a summary WITHOUT invoking the runtime and
+        # WITHOUT writing any checkpoint or dataset bytes.
+        if self._policy_profile is not None:
+            decision = self._evaluate_run_policy(actor, capabilities, run_input, ctx)
+            if decision.decision == PolicyDecision.DENY:
+                self._print(f"[harness] POLICY DENIED {ctx.job_id}: "
+                            f"{decision.capability} ({decision.reason})")
+                return self._gated_summary(ctx, actor, decision, "policy_denied")
+            if decision.decision == PolicyDecision.REQUIRE_APPROVAL:
+                self._print(f"[harness] APPROVAL REQUIRED {ctx.job_id}: "
+                            f"{decision.capability} ({decision.reason})")
+                return self._gated_summary(ctx, actor, decision, "approval_required")
+            self._print(f"[harness] policy ALLOW {ctx.job_id}: "
+                        f"profile {self._policy_profile.name} "
+                        f"v{self._policy_profile.version}")
+
         # Execution, persistence, budgets, termination: RUNTIME-owned, called
         # unmodified. The harness holds no state between runs (stateless gate).
         return await self._runtime.run(actor, ctx, opts)
@@ -259,6 +304,87 @@ f"actor_id ({actor.actor_id!r}); expected {_IDENTIFIER_DOC}"
                 )
             seen.add(cap.name)
         return tuple(declared)
+
+    def _evaluate_run_policy(
+        self,
+        actor: AcquisitionActor,
+        capabilities: Tuple[Capability, ...],
+        run_input: RunInput,
+        ctx: RunContext,
+    ) -> PolicyDecisionRecord:
+        """Evaluate EVERY declared capability against the enforced profile.
+
+        Semantics (deterministic):
+        - zero capabilities under an enforced policy ⇒ DENY: a run that
+          declares nothing still performs network/browser work implicitly;
+          under enforcement nothing is granted by default (fail closed).
+        - first non-ALLOW verdict (in declaration order) wins and is returned.
+        - all declared capabilities allowed ⇒ the last ALLOW record is
+          returned for audit.
+
+        Declaring EXTRA capabilities can therefore never BYPASS the gate:
+        each additional declared capability must ALSO be explicitly allowed,
+        otherwise the run is denied.
+        """
+        evaluator = PolicyEvaluator(self._policy_profile)
+        if not capabilities:
+            return PolicyDecisionRecord(
+                actor_id=getattr(actor, "actor_id", ""),
+                capability="(none-declared)",
+                resource=run_input.target_url,
+                decision=PolicyDecision.DENY,
+                policy_version=self._policy_profile.version,
+                reason="no_capabilities_declared_under_enforced_policy",
+            )
+        first_blocker: Optional[PolicyDecisionRecord] = None
+        allow_record: Optional[PolicyDecisionRecord] = None
+        for cap in capabilities:
+            request = CapabilityRequest.for_capability(
+                cap,
+                actor_id=actor.actor_id,
+                resource=run_input.target_url,
+                purpose="acquisition-run",
+                metadata={},  # metadata is NEVER trusted for authorization
+            )
+            record = evaluator.evaluate(request, provider=run_input.provider)
+            if (
+                record.decision != PolicyDecision.ALLOW
+                and first_blocker is None
+            ):
+                first_blocker = record
+            allow_record = record
+        return first_blocker or allow_record  # type: ignore[return-value]
+
+    def _gated_summary(
+        self,
+        ctx: RunContext,
+        actor: AcquisitionActor,
+        decision: PolicyDecisionRecord,
+        termination_reason: str,
+    ) -> RunSummary:
+        """Terminal summary for a policy-gated (non-executed) run.
+
+        Side-effect-free by construction: no checkpoint commit, no dataset
+        write, no pagination state — only this summary carries the audited
+        decision (full record in metrics['policy_decision']).
+        """
+        outcome = classify_termination(termination_reason)
+        return RunSummary(
+            run_id=ctx.run_id,
+            job_id=ctx.job_id,
+            provider=ctx.provider,
+            resumed=False,
+            termination_reason=termination_reason,
+            outcome=outcome,
+            items_written=0,
+            items_seen=0,
+            metrics={"policy_decision": decision.to_dict()},
+            dataset_path=str(ctx.dataset_path),
+            checkpoint_path=str(ctx.checkpoint_path),
+            actor_id=getattr(actor, "actor_id", ""),
+            actor_version=getattr(actor, "actor_version", ""),
+            lifecycle_state=lifecycle_for_outcome(outcome),
+        )
 
     def _resolve_options(self, run_input: RunInput,
                          options: Optional[RunOptions]) -> RunOptions:

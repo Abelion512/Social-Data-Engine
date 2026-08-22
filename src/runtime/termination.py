@@ -30,9 +30,14 @@ class Outcome:
     AUTH_BLOCKED = "auth_blocked"              # login/captcha/anti-bot challenge
     PAGINATION_STALL = "pagination_stall"      # cursor stopped advancing
     CAP_REACHED = "cap_reached"                # user/configured item or page cap
+    # Additive policy-gate outcomes (PolicyEvaluator v0). Legacy outcomes and
+    # reason strings are unchanged; these are NEW classifications only.
+    POLICY_DENIED = "policy_denied"            # policy gate refused the run (fail closed)
+    APPROVAL_REQUIRED = "approval_required"    # policy requires approval before executing
 
     ALL = (SUCCESS, RETRYABLE_FAILURE, PERMANENT_FAILURE, AUTH_BLOCKED,
-           PAGINATION_STALL, CAP_REACHED)
+           PAGINATION_STALL, CAP_REACHED,
+           POLICY_DENIED, APPROVAL_REQUIRED)
 
 
 # reason string → outcome category. Legacy TikTok strings are first-class here
@@ -57,6 +62,9 @@ _REASON_TO_OUTCOME = {
     "max_empty_pages_exceeded": Outcome.RETRYABLE_FAILURE,
     "parse_failure": Outcome.RETRYABLE_FAILURE,
     "fetch_failure": Outcome.RETRYABLE_FAILURE,
+    # policy gate (added by PolicyEvaluator v0 — never renamed)
+    "policy_denied": Outcome.POLICY_DENIED,
+    "approval_required": Outcome.APPROVAL_REQUIRED,
 }
 
 
@@ -103,6 +111,12 @@ _OUTCOME_TO_LIFECYCLE = {
     Outcome.PAGINATION_STALL: RunLifecycle.TERMINATED,
     Outcome.RETRYABLE_FAILURE: RunLifecycle.FAILED,
     Outcome.PERMANENT_FAILURE: RunLifecycle.FAILED,
+    # Policy-gated stops are externally imposed (the actor did not fail), so
+    # they classify TERMINATED like auth/stall. APPROVAL_REQUIRED maps here
+    # until a real SUSPENDED state exists (Constitution §10 PLANNED) — there
+    # is deliberately no fake suspension semantics in v0.
+    Outcome.POLICY_DENIED: RunLifecycle.TERMINATED,
+    Outcome.APPROVAL_REQUIRED: RunLifecycle.TERMINATED,
 }
 
 
