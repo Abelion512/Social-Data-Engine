@@ -63,8 +63,11 @@ harness agents are not uniformly bounded.
 browser); undeclared actions are unavailable.
 **Does NOT mean:** renaming permissions after the fact or implicit grants by
 import.
-**Exists:** vocabulary only (`src/policy/models.py`: `Capability`,
-`CapabilityRequest`) — nothing requires or checks declarations.
+**Exists:** vocabulary (`src/policy/models.py`: `Capability`,
+`CapabilityRequest`) + structural DECLARATION at the actor boundary
+(`AcquisitionActor.capabilities()`, structurally validated by `ActorHarness`
+and recorded into run provenance). Declarations are still never required,
+ever granted, and never checked against actions — nothing enforces them.
 **Future enforcer:** capability declaration at actor/harness registration +
 evaluation before each action.
 

@@ -359,3 +359,36 @@ Proof:
 
 Kesimpulan akhir: kode sudah **pluggable + browser-agent-first + sampai-tuntas traceable**; 2 kriteria
 yang butuh runtime orang (coverage≥95% login full, live LinkedIn scraper) memang env-dependent.
+
+## 8. Harness / Actor Contract PR — deterministic verification record
+
+Scope: minimal provider-independent Harness/Actor Contract
+(`src/runtime/harness.py`, extended `src/runtime/actor.py`, additive
+provenance/lifecycle in `src/runtime/engine.py`, `src/providers/tiktok_actor.py`).
+No TikTok scraping semantics changed: `src/collector.py`, `src/tiktok_schema.py`
+and the live browser loop are untouched; `tiktok_schema` re-exports keep loading.
+
+Deterministic gates (this environment: system Python 3.10, no browser):
+
+| Suite | Result |
+|---|---|
+| `tests/test_actor_harness.py` (new) | 18 passed, 0 failed |
+| `tests/test_policy_models.py` | 8 passed, 0 failed |
+| `tests/test_acquisition_runtime.py` | 15 passed, 0 failed |
+| `tests/test_checkpoint_fail_closed.py` | 4 passed, 0 failed |
+| `tests/test_tiktok_pagination.py` | 11 passed, 0 failed |
+| `tests/test_acquisition_hardening.py` | 11 passed, 0 failed |
+| `tests/run_dedup_quality_tests.py` | 8 passed, 0 failed |
+| `tests/test_self_improvement.py` | pass (exit 0) |
+| `tests/test_dedup.py` / `tests/test_pipeline.py` | 4 / 13 passed |
+| `python -m py_compile src/*.py src/*/*.py tests/*.py scripts/*.py` | OK |
+| `bash -n run.sh` | OK |
+| `grep -rn "LINKEDIN_PASSWORD\|LINKEDIN_USERNAME" src/` | 0 hits |
+
+Live-test gate status: NOT run in this environment (headless server, no
+display/CDP — per §7 the full gate needs a desktop human-in-the-loop session).
+Justification for deterministic-only: the change adds a validation/provenance
+layer AROUND the runtime and a provider actor module that is not wired into the
+live collection path; the acquisition entry points that the live test exercises
+are byte-identical. The live gate remains mandatory before any merge that
+changes collection behavior.
