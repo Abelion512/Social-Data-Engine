@@ -392,3 +392,64 @@ layer AROUND the runtime and a provider actor module that is not wired into the
 live collection path; the acquisition entry points that the live test exercises
 are byte-identical. The live gate remains mandatory before any merge that
 changes collection behavior.
+
+## 9. PR #5 Final Hardening — real page source wired (record)
+
+### What changed
+- `src/providers/tiktok_actor.py`:
+  - `CollectorApiPageSource` — the REAL page source, dependency-injected.
+    Delegates to existing `src.collector.fetch_comments_api` UNMODIFIED
+    (same API URL pattern / same-origin cookies / retry-backoff / challenge
+    classification). Lazy imports keep deterministic envs browser-free.
+  - `TikTokAcquisitionActor.fetch_page` now accepts awaitable sources
+    (production shape) alongside sync recorded-page sources.
+  - Converter fidelity fix found BY the new tests: raw pages carrying the
+    collector's own `error`/`error_type` verdicts (e.g. `auth_blocked`)
+    now pass through as errored PageResults. Previously they were laundered
+    into empty pages — challenges would have looked like stalls. This
+    RESTORES legacy `_capture_pass` stop-semantics at the actor boundary.
+  - `connect_production_page` + `run_live`: URL→video_id→page→actor→
+    ActorHarness→Runtime chain; session lifecycle owned by caller; login
+    stays human-in-the-loop per agents.md.
+- Scope note: this source is cursor-paginated TOP-LEVEL comment pages.
+  Reply-thread expansion remains in the untouched `_capture_pass` flow.
+
+### Deterministic proof (all green)
+- `tests/test_actor_harness.py`: **22/22** incl. 4 new hardening tests —
+  URL parsing/validation fail-closed · wire-parameter assertions proving
+  unmodified `aweme_id/count/cursor` reach `fetch_comments_api` ·
+  async-source resume through ONE shared runtime (30 items, cap-interrupt,
+  resume → 30 unique, zero dupes) · auth-blocked classified TERMINATED with
+  zero fabricated records.
+- Full regression: policy 8 · runtime 15 · checkpoint 4 · pagination 11 ·
+  hardening 11 · dedup 4+8 · pipeline 13 · self-improvement 11 · py_compile OK.
+
+### Live TikTok test — NOT RUN (environment-blocked, evidence recorded)
+This workspace is a headless server: no DISPLAY, no camoufox/playwright
+modules, no xvfb (probe output retained in session log). Attempting
+`run_live(...)` fails CLEANLY and by design:
+
+```
+[browser] 🦊 Fallback ke Camoufox (anti-detect Firefox)...
+[browser] ❌ Camoufox launch gagal: 'NoneType' object is not callable
+LIVE-BLOCKED (expected): RuntimeError: production TikTok page source requires
+a connected browser (desktop visible-browser flow per agents.md)
+```
+
+Per the golden rule, **PR #5 must not merge on deterministic tests alone**:
+the live gate requires one desktop run —
+
+```bash
+python3 - <<'PY'
+import asyncio
+from src.providers.tiktok_actor import run_live
+s, sess = asyncio.run(run_live(
+    "https://www.tiktok.com/@coretanmalam2000/photo/7673343206544706837",
+    max_items=50))
+print(s.outcome, s.lifecycle_state, s.items_seen, s.dataset_path)
+PY
+```
+
+(visible browser, Allow/login human-in-the-loop; then verify coverage,
+checkpoint resume, and provenance per §7 criteria). Merge decision is
+explicitly deferred to that run.

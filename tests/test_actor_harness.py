@@ -52,7 +52,9 @@ from src.runtime import (
     lifecycle_for_outcome,
 )
 from src.providers.tiktok_actor import (
+    CollectorApiPageSource,
     TikTokAcquisitionActor,
+    parse_tiktok_video_id,
     tiktok_api_page_to_page_result,
 )
 from src.tiktok_schema import COLLECTOR_VERSION
@@ -547,6 +549,144 @@ def test_tiktok_actor_requires_page_source_fail_fast():
         pass
 
 
+# ── Hardening: REAL collector page source wired via dependency injection ──────
+
+class _FakeApiPage:
+    """Offline stand-in for a live browser page evaluating the comments-API JS.
+
+    Serves recorded body payloads in order (the final body repeats with
+    has_more=0 so pagination terminates) and records every evaluated JS call,
+    so tests can assert the UNMODIFIED fetch_comments_api wire parameters
+    (aweme_id / count / cursor).
+    """
+
+    def __init__(self, bodies):
+        self.bodies = [dict(b) for b in bodies]
+        self.calls = []
+
+    async def evaluate(self, js):
+        import re as _re
+        m = _re.search(r"aweme_id=(\d+)&count=(\d+)&cursor=(\d+)", js)
+        self.calls.append({
+            "aweme_id": m.group(1) if m else None,
+            "count": int(m.group(2)) if m else None,
+            "cursor": int(m.group(3)) if m else None,
+        })
+        if len(self.bodies) > 1:
+            body = self.bodies.pop(0)
+        else:
+            body = dict(self.bodies[0])
+            body["has_more"] = 0
+        return json.dumps({"status_code": 200, "body": json.dumps(body)})
+
+
+def _script_pages(n_items, per_page, prefix="c"):
+    """TikTok-shaped top-level pages: {comments, cursor, has_more}."""
+    pages = []
+    for start in range(0, n_items, per_page):
+        chunk = [{"comment_id": f"{prefix}_{i}", "text": f"t{i}"}
+                 for i in range(start, min(start + per_page, n_items))]
+        pages.append({"comments": chunk,
+                      "cursor": min(start + per_page, n_items),
+                      "has_more": 1 if start + per_page < n_items else 0})
+    return pages
+
+
+def test_production_source_parses_url_and_validates_arguments():
+    assert parse_tiktok_video_id("https://www.tiktok.com/@u/video/123") == "123"
+    assert parse_tiktok_video_id("https://www.tiktok.com/@u/photo/456") == "456"
+    for bad in ("https://example.com/x/1", "", None):
+        try:
+            parse_tiktok_video_id(bad)
+            raise AssertionError(f"must reject {bad!r}")
+        except ValueError:
+            pass
+    try:
+        CollectorApiPageSource(None, "123")
+        raise AssertionError("page=None must be rejected")
+    except ValueError:
+        pass
+    try:
+        CollectorApiPageSource(object(), "abc")
+        raise AssertionError("non-numeric video_id must be rejected")
+    except ValueError:
+        pass
+
+
+def test_collector_api_source_delegates_with_unmodified_parameters():
+    page = _FakeApiPage([
+        {"comments": [{"comment_id": "c_1", "text": "hi"}], "cursor": 50, "has_more": 1},
+        {"comments": [{"comment_id": "c_2", "text": "yo"}], "cursor": 100, "has_more": 0},
+    ])
+    src = CollectorApiPageSource(page, "123", count=50)
+    p1 = tiktok_api_page_to_page_result(run(src(0, 0)))
+    assert [(c["aweme_id"], c["count"], c["cursor"]) for c in page.calls] == [
+        ("123", 50, 0)]
+    assert [i["comment_id"] for i in p1.items] == ["c_1"]
+    assert p1.has_more is True
+    p2 = tiktok_api_page_to_page_result(run(src(50, 1)))
+    assert [c["cursor"] for c in page.calls] == [0, 50]
+    assert [i["comment_id"] for i in p2.items] == ["c_2"]
+    assert p2.has_more is False
+
+
+def test_async_real_source_through_shared_runtime_resume_intact():
+    """The production source SHAPE (async callable, cursor-driven) keeps
+    checkpoint/resume semantics intact through the SAME shared runtime."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        rt = AcquisitionRuntime(print_fn=lambda *_: None)   # ONE shared runtime
+        harness = ActorHarness(runtime=rt, print_fn=lambda *_: None,
+                               state_dir=str(Path(tmpdir) / "s"),
+                               data_dir=str(Path(tmpdir) / "d"))
+        pages = _script_pages(30, 10)
+
+        async def real_shaped_source(cursor, page_index):
+            # Cursor-driven selection mirrors fetch_comments_api semantics.
+            cur = cursor if isinstance(cursor, int) else 0
+            return pages[min(len(pages) - 1, cur // 10)]
+
+        actor = TikTokAcquisitionActor(page_source=real_shaped_source)
+        inp = make_input(actor, url="https://www.tiktok.com/@u/video/777",
+                         provider="tiktok", payload={"video_id": "777"},
+                         job_id="job_tt_async")
+        s1 = run(harness.run(actor, inp, options=RunOptions(max_pages=1)))
+        assert s1.outcome == Outcome.CAP_REACHED
+        ckpt1 = json.loads(Path(s1.checkpoint_path).read_text())
+        assert ckpt1["target"]["video_id"] == "777"
+
+        s2 = run(harness.run(actor, inp, options=RunOptions(resume=True)))
+        assert s2.outcome == Outcome.SUCCESS
+        ids = [r["comment_id"] for r in read_lines(s2.dataset_path)]
+        assert len(ids) == len(set(ids)), "duplicates after resume"
+        assert sorted(ids) == sorted(f"c_{i}" for i in range(30))
+
+
+def test_collector_api_source_auth_blocked_classified_not_success():
+    class _VerifyPage:
+        async def evaluate(self, js):
+            return json.dumps({"status_code": 10001,
+                               "body": json.dumps({"status_code": 10001,
+                                                   "status_msg": "verify your account",
+                                                   "comments": []})})
+
+    raw = run(CollectorApiPageSource(_VerifyPage(), "123")(0, 0))
+    assert raw.get("error_type") == "auth_blocked"
+    pr = tiktok_api_page_to_page_result(raw)
+    assert pr.items == []
+    assert pr.error_type == "auth_blocked"      # collector verdict survives
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        harness = make_harness(tmpdir)
+        actor = TikTokAcquisitionActor(page_source=_VerifyPage())
+        inp = make_input(actor, url="https://www.tiktok.com/@u/video/123",
+                         provider="tiktok", payload={"video_id": "123"})
+        s = run(harness.run(actor, inp))
+        assert s.outcome != Outcome.SUCCESS           # classified, never faked success
+        assert s.lifecycle_state == RunLifecycle.TERMINATED
+        ds = Path(s.dataset_path)
+        assert not ds.exists() or read_lines(ds) == []   # zero fabricated records
+
+
 if __name__ == "__main__":
     tests = [
         test_fake_actor_declares_capabilities_and_executes_through_runtime,
@@ -567,6 +707,10 @@ if __name__ == "__main__":
         test_tiktok_actor_through_shared_runtime_resume_intact,
         test_tiktok_actor_malformed_source_terminates_as_parse_failure,
         test_tiktok_actor_requires_page_source_fail_fast,
+        test_production_source_parses_url_and_validates_arguments,
+        test_collector_api_source_delegates_with_unmodified_parameters,
+        test_async_real_source_through_shared_runtime_resume_intact,
+        test_collector_api_source_auth_blocked_classified_not_success,
     ]
     passed = failed = 0
     for t in tests:

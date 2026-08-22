@@ -3,8 +3,9 @@
 Version 1.0 · 2026-08-22 · Evidence-based map of what exists. Status labels
 follow the Constitution's discipline: upgraded only with tests/code that prove
 the stronger claim. Branch note: Harness/Actor contract work is **PR #5 (open,
-unmerged)** on `feat/actor-harness-contract`; this document describes main +
-that pending PR.
+unmerged)** on `feat/actor-harness-contract`. Per the honest-labeling rule,
+PR #5 scope is labeled **PENDING / EXPERIMENTAL** in §1b — nothing from an
+unmerged PR counts as IMPLEMENTED here, no matter how green its tests are.
 
 ---
 
@@ -22,11 +23,22 @@ that pending PR.
 | TikTok-shaped actor executing through unmodified runtime incl. resume past item boundary | `src/providers/tiktok_actor.py`; PR #5 test proving same-runtime execution for fake + TikTok-shaped actors |
 | Credential hygiene: cookie/profile auth only, no plaintext creds | grep gate in pre-merge checklist |
 
+## 1b. PENDING MERGE — PR #5 (open): EXPERIMENTAL until merged
+
+Everything below exists ONLY on the open PR branch. It is not IMPLEMENTED by
+this document's standard (merged + proven) and must not be cited as such.
+
+| Capability | Evidence | Status |
+|---|---|---|
+| Harness/Actor contract: `RunInput` (fail-closed, serializable, identity binding), `ActorHarness` (structural capability validation, zero-caps valid, dupes rejected, config projection to RunOptions axes), lifecycle states derived from outcomes, actor provenance in summaries/checkpoints (additive) | `src/runtime/harness.py`, `src/runtime/actor.py`; `tests/test_actor_harness.py` (22) on the PR branch | Pending merge |
+| Fake + TikTok-shaped actors executing through ONE unmodified runtime; resume past item boundary without duplication | PR #5 same-runtime-equivalence tests | Pending merge |
+| Real production page source wired into the actor via DI: `CollectorApiPageSource` → unmodified `fetch_comments_api`; collector challenge classifications (`auth_blocked`/`fetch_failure`) pass through instead of being laundered into empty pages; reply-thread expansion deliberately stays in `_capture_pass` | Hardening-cycle tests: wire-parameter assertions, async-source resume through shared runtime, auth-blocked termination | **Wired, deterministic-tested; live desktop proof still pending** (visible-browser human-in-the-loop run) |
+
 ## 2. PARTIALLY IMPLEMENTED (works in some paths/scopes; gaps named)
 
 | Capability | What exists | Gap |
 |---|---|---|
-| Provenance | Curated↔raw id traceability proven (44/44 via `scripts/trace_comment.py`); improve manifests per iteration; run summaries carry outcome/reason/lifecycle/actor fields | Manifest writing not universal at dataset append; no schema version stamp; verification command is a script habit, not a required interface (FR-PROV-003/004, FR-DAT-003) |
+| Provenance | Curated↔raw id traceability proven (44/44 via `scripts/trace_comment.py`); improve manifests per iteration; run summaries carry outcome/reason (+ lifecycle/actor fields land with PR #5) | Manifest writing not universal at dataset append; no schema version stamp; verification command is a script habit, not a required interface (FR-PROV-003/004, FR-DAT-003) |
 | Self-improvement measurement | Loop-continuation requires ≥5pp coverage delta; metrics before/after recorded per iteration | No lesson-level delta reports or accept/reject schema; "improved" claims not yet machine-checkable across runs (FR-SI-003 completion, FR-SI-004) |
 | Bounded execution | Item/page/retry budgets enforced; fully-unbounded budgets unrepresentable | Wall-clock and network-call axes exist in `ExecutionBudget` but are consumed nowhere (FR-ACQ-005); legacy scripts/harness agents not uniformly bounded (Constitution §4) |
 | Transparency | Summaries on success+failure; agent trace logs exist in-memory/JSON dump | Traces not integrated with manifest evidence chain (FR-TRANS-003); no run-inspection command (FR-TRANS-004) |
@@ -63,7 +75,7 @@ that pending PR.
 `test_policy_models` (8) · `test_acquisition_runtime` (15) ·
 `test_checkpoint_fail_closed` (4) · `test_tiktok_pagination` (11) ·
 `test_acquisition_hardening` (11) · dedup/quality (8+4) ·
-`test_pipeline` (13) · `test_self_improvement` · `test_actor_harness` (18, PR #5) ·
+`test_pipeline` (13) · `test_self_improvement` · `test_actor_harness` (22, on PR #5 branch) ·
 `py_compile` over `src/**` + `tests/**`.
 
 Live-test gate: last full desktop live run = run #2 (see Constitution header /
