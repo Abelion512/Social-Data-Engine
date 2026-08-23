@@ -148,3 +148,33 @@ Where existing architecture serves the spec, it is kept (runtime, checkpoint
 semantics). Where it conflicts (advisory-only capabilities, non-universal
 provenance, dual "harness" meanings), the spec wins and gaps are scheduled —
 never silently relabeled as design intent.
+
+### D-014 — The security maturity ladder binds every autonomy increase — ADOPTED (PR #8)
+**Context.** PR #8 audited SDE against an adversarial model/actor and produced
+`docs/SECURITY-THREAT-MODEL.md` (25 tracked threats TM-01..TM-25) and
+`docs/architecture/CONTAINMENT.md`. Findings: one P0 class — caller-controlled
+`job_id`/`video_id` path interpolation lets a submitted run write outside the
+workspace through sanctioned entry points (TM-01/TM-13) — plus P1 gaps: the
+policy gate is opt-in and the legacy CLI runs ungated (TM-02/TM-24),
+declarations are never matched to actions (TM-03), budgets have no ceilings or
+time/call axes (TM-04), egress is unrestricted including a sanctioned screenshot-
+to-third-party channel (TM-17), CDP attach drives the operator's real logged-in
+profile (TM-18), and session cookies persist as plaintext exports (TM-19).
+**Decision.** (1) Autonomy/exposure increases are gated by the security maturity
+ladder L0–L5 defined in those documents; promotion requires the level's S-gates
+green plus a recorded promotion note — roadmap ordering alone no longer
+authorizes wider exposure. (2) No widening of exposure before **S-G1 (mandatory
+deny-by-default gate on all sanctioned entry points) and S-G2 (identity-safe
+identifiers + workspace-rooted path resolution)** land. (3) L4 (process/sandbox
+isolation) remains unreachable without explicitly amending PRODUCT.md §8
+non-goal #6; containment docs may describe it but no roadmap phase enacts it.
+(4) Controls must be enforced outside the model's reasoning — constructors,
+evaluator, path resolution, OS boundaries — never prompts or conventions.
+**Consequences.** PR #9 (next implementation PR) is pinned to S-G1+S-G2+ceiling
+clamps + secret-scanner stub. `ROADMAP.md` carries the S-gate schedule. Doc/code
+drift found during the audit (CURRENT-STATE/SRS lag merged evaluator work) must
+be reconciled under NFR-010 discipline.
+**Rejected.** (a) Treating the threat model as informational only — leaves the
+P0 escape open exactly when exposure grows. (b) Jumping straight to sandboxing —
+contradicts an explicit non-goal and skips cheap high-value gates. (c) Fixing
+the P0 by documentation — violates the outside-the-model-reasoning rule.
