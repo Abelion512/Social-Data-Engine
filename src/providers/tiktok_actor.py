@@ -234,7 +234,13 @@ async def run_live(video_url: str, *, max_items: int = 200, max_pages=None,
         video_url, force_camoufox=force_camoufox)
     actor = TikTokAcquisitionActor(
         page_source=CollectorApiPageSource(session.page, video_id, count=count))
-    harness = ActorHarness(print_fn=print_fn, state_dir=state_dir, data_dir=data_dir)
+    # S-G1 part 1 (threat model §3.D item 3): the harness DEFAULT is now a
+    # deny-all profile. The legacy CLI/live path predates gate unification,
+    # so it opts out via the explicit keyword-only trusted_operator switch —
+    # the documented Phase 2 window escape hatch (removed at Phase 3 CLI
+    # unification; tracked as TM-02/TM-24 residual).
+    harness = ActorHarness(print_fn=print_fn, state_dir=state_dir, data_dir=data_dir,
+                           trusted_operator=True)
     config = {"max_items": int(max_items)}
     if max_pages is not None:
         config["max_pages"] = int(max_pages)
