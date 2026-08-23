@@ -29,6 +29,17 @@ green (`ROADMAP.md` §Security gates), (b) a promotion note citing those tests
 in `DECISIONS.md`-style record, (c) no known open P0 against the entering
 level's surface.
 
+**Upgrade law (binding — threat model §1.1, `DECISIONS.md` D-015).** Each
+transition requires its enforcement class: L0→L1 mandatory gating + safe ids
+(S-G1/G2); L1→L2 capability enforcement (S-G3/G4/G5); L2→L3 the
+filesystem/network boundary (S-G6/G7/G8/G10); L3→L4 process isolation
+(PRODUCT.md §8 amendment first, then S-G9); L4→L5 multi-agent isolation +
+tamper-evident audit (S-G11–G14). **Implementing or scheduling level N+1
+mechanisms while level N's gates are not green is a merge-blocking
+violation** — describing a level, even in these docs, is not permission to
+build it. Assets and their allowed access are classified in threat model
+§0.1; trust zones and crossing rules in §0.2.
+
 ---
 
 ## 2. L0 — Trusted operator (today)

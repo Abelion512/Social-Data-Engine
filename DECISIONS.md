@@ -178,3 +178,38 @@ be reconciled under NFR-010 discipline.
 P0 escape open exactly when exposure grows. (b) Jumping straight to sandboxing —
 contradicts an explicit non-goal and skips cheap high-value gates. (c) Fixing
 the P0 by documentation — violates the outside-the-model-reasoning rule.
+
+### D-015 — Upgrade gates, asset classification, and trust boundaries are normative — ADOPTED (PR #8 review fixes)
+**Context.** Review of PR #8 accepted the threat-model direction but found the
+ladder descriptive rather than enforceable: nothing stopped a future
+contributor from building L5 machinery over an unfinished L3, "protect
+secrets" had no per-asset meaning, and prose alone could not show where trust
+ends for the next developer.
+**Decision.** Three additions to `docs/SECURITY-THREAT-MODEL.md` are binding.
+(1) **§1.1 upgrade law:** each transition L0→L1 … L4→L5 names its required
+enforcement class and owning S-gates; implementing or scheduling level N+1
+mechanisms while level N's gates lack green tests is a merge-blocking
+violation; promotions are recorded human decisions citing those tests;
+demotions require an incident record; exposure never widens with an open P0.
+(2) **§0.1 asset classification:** every protected asset carries a sensitivity
+(Critical / Medium / integrity-tier), an allowed-access rule, and storage
+handling; Critical assets (`LLM_KEY`, TikTok session cookies, the operator's
+logged-in browser profile) never enter payloads, prompts, logs, or datasets in
+any representation; evidence assets rank integrity above confidentiality
+(D-005); captured content is Medium and permanently untrusted data.
+(3) **§0.2 trust boundary diagram:** UNTRUSTED (actor reasoning, submitted
+inputs, plugin input, scraped data) → CONTROLLED (ActorHarness,
+PolicyEvaluator, AcquisitionRuntime, loops, path resolution) → TRUSTED
+(storage, secrets, execution environment), with one-way crossing rules; until
+L2/L3 the controlled/trusted separation for in-process actors is logical, not
+mechanical, and must stay labeled as such (TM-03).
+**Consequences.** Reviewers gain three concrete refusal criteria: missing gate
+class for a transition, unclassified new assets, and any control that assumes
+an actor can be trusted with host reach. CONTAINMENT.md §1 and ROADMAP.md's
+security overlay carry pointers so the law is met where work is planned. No
+code changes in this PR; enforcement itself remains owned by the S-gates.
+**Rejected.** (a) Keeping the ladder prose-only — reviewers would keep
+relitigating whether autonomy increases are premature instead of checking a
+gate table. (b) Classifying assets ad hoc inside each threat row — access
+rules must be checkable in one place before code lands. (c) Mermaid/image
+diagrams — ASCII survives diffs, terminal review, and grep.

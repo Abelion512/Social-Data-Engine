@@ -15,6 +15,10 @@ security maturity ladder (`docs/SECURITY-THREAT-MODEL.md` §1,
 only if its S-gates are green, and **no exposure widening happens before
 S-G1 + S-G2 land.** The next implementation PR is pinned: **PR #9 = S-G2 +
 gate-default + ceiling clamps + secret-scanner stub** (threat model §3.D).
+Transitions themselves are bound by the **upgrade law** (threat model §1.1,
+`DECISIONS.md` D-015): implementing or scheduling level N+1 mechanisms while
+level N's S-gates are not green is a merge-blocking violation. Asset handling
+follows threat model §0.1; trust zones follow §0.2.
 
 ---
 

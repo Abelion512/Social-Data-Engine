@@ -2,8 +2,9 @@
 
 PR #8 deliverable · 2026-08-23 · Status: **binding reference** for all autonomy
 increases. Companion docs: `docs/architecture/CONTAINMENT.md` (mechanisms per
-maturity level), `DECISIONS.md` **D-014** (the ladder binds autonomy),
-`ROADMAP.md` §Security gates (S-gates).
+maturity level), `DECISIONS.md` **D-014** (the ladder binds autonomy) and
+**D-015** (upgrade law, asset classes, trust boundaries), `ROADMAP.md`
+§Security gates (S-gates).
 
 ---
 
@@ -41,6 +42,82 @@ IMPLEMENTED while `src/policy/evaluator.py` + the harness gate exist and
 **Control status vocabulary** (mirrors the Constitution): `enforced`,
 `documented`, `planned`.
 
+### 0.1 Asset classification
+
+"Protect secrets" is not a control until every asset has a name, a
+sensitivity, an access rule, and a home. This table is **normative**: any new
+asset (credential, config value, store, file class) MUST be added here before
+code touches it.
+
+| Asset | Sensitivity | Allowed access | Storage / handling | Tracked threats |
+|---|---|---|---|---|
+| LLM/router API keys (`LLM_KEY`) | **Critical** | Never exposed to any actor; captcha subsystem only; lazy read at call site | Env / `.env` outside Git; never in payloads, prompts, logs, datasets | TM-21, TM-03 |
+| TikTok session cookies (`sessionid`…) | **Critical** | Collector runtime via cookie loader only; never serialized into contracts | `~/.tiktok-linkedin/` perms 0600; repo-relative cookie probing removed; rotate on suspicion | TM-19, TM-20 |
+| Operator browser profile (logged-in session) | **Critical** | Attach-mode automation behind visible-browser human-in-the-loop only; never granted to submitted runs | User's daily profile today; dedicated automation profile at S-G7 | TM-18 |
+| Raw captured dataset (comments, media refs) | Medium — public-source content, **untrusted forever** | Collector actor: append-only; downstream reads via export surfaces only | `data/raw/<date>/` JSONL tiering | §2.9, TM-16 |
+| Curated dataset | Medium | Pipeline-derived only; quality-gated | `data/curated/<date>/` | §2.9 |
+| Checkpoints + loop state | Integrity-high, confidentiality-low | Owning run/actor only; resume verifies actor binding (lands with S-G5) | `state/runs/`, loop-state dir; atomic tmp+replace | TM-07, TM-08, TM-14 |
+| Manifests / provenance evidence | **Integrity-critical** — the product promise (D-005) | Written only at emission points; read by verification commands | `data/manifests/` | TM-14, TM-05 |
+| `RunInput.payload`/`config` | Low confidentiality, high integrity | Operator or submitted run; validated, clamped, secret-scanned at the harness | Transient; size-capped; scanner-passed | TM-04, TM-05 |
+| Logs / summaries | Must remain secret-free | Any consumer | Redaction at boundaries (S-G7/S-G8) | TM-20 |
+
+Classification rules: (a) **Critical** assets never cross into the UNTRUSTED
+zone of §0.2 in any representation — value, fragment, filename, or count.
+(b) Evidence assets rank integrity above confidentiality: a forged "done" is
+worse than a disclosed comment, because provenance *is* the product (D-005).
+(c) Captured external content is Medium *and permanently untrusted* — it is
+data, never instruction (TM-16).
+
+### 0.2 Trust boundaries
+
+Zones are ordered by *who can be assumed honest*, not by directory layout.
+All security reasoning reduces to moving effects downward through the two
+crossings — and never letting the upper zone reach the lower zone directly.
+
+```text
+UNTRUSTED — assume adversarial; validate everything
+----------------------------------------------------
+  LLM actor reasoning        submitted RunInput (payload/config)
+  plugin/tool input          scraped pages, comments, DOM
+  provider responses         anything previously crossed inward
+
+        |   crosses ONLY as versioned serialized contracts;
+        v   validated, slug-checked ids, deny-by-default evaluation
+
+CONTROLLED — enforcement lives here, OUTSIDE the model's reasoning
+----------------------------------------------------
+  ActorHarness          identity bind · structural validation · policy gate
+  PolicyEvaluator       deterministic deny-by-default decisions
+  AcquisitionRuntime    budgets · termination taxonomy · checkpoint/resume
+  LoopState + improve   deterministic planner · MAX_ITER_CAP · idempotent
+  path resolution       strict id charsets · commonpath root checks (S-G2/G6)
+
+        |   crosses ONLY as capability-checked,
+        v   budget-bounded actions at engine insertion points
+
+TRUSTED — operator-owned; actors have NO direct reach here
+----------------------------------------------------
+  Storage      data/ · state/runs/ · data/manifests/ · loop-state dir
+  Secrets      env keys · ~/.tiktok-linkedin/ cookie store · browser profile
+  Execution    process, OS, network stack, browser driver
+```
+
+Crossing rules:
+
+1. **Untrusted → Controlled:** only via `RunInput`-class serialized contracts.
+   Hostile identifiers/values fail closed naming the field (S-G2); metadata
+   never authorizes.
+2. **Controlled → Trusted:** only through harness-mediated, budget-bounded,
+   capability-evaluated actions. At L0/L1 this separation for in-process
+   actors is **logical, not mechanical** — actor code still holds host trust
+   (TM-03) — and it stays labeled as such wherever claimed; L2/L3 make it
+   mechanical. Honesty about this gap is the boundary's credibility.
+3. **Trusted → Untrusted:** never. Secrets do not appear in payloads, prompts,
+   logs, summaries, or datasets (rules §0.1; enforced by S-G7/S-G8).
+4. **Data is not instruction.** Scraped content remains UNTRUSTED even after
+   entering the controlled zone — it feeds metrics and datasets, never planner
+   logic or prompts (TM-16).
+
 ---
 
 ## 1. Security maturity ladder
@@ -63,6 +140,34 @@ Detailed mechanisms per level live in `CONTAINMENT.md`.
 harness gate exist (PR #6/#7 lineage), but the gate is opt-in, the legacy CLI
 runs ungated, and filesystem/network controls are conventions. SDE is **not**
 yet L1 by its own ladder.
+
+### 1.1 Autonomy level upgrade requirements (binding)
+
+The ladder is architecture law, not narrative. Each transition names its
+required enforcement class; a transition is **forbidden until every listed
+condition exists in code with passing tests**. Describing a level in docs —
+even here — is not permission to build it.
+
+| Transition | Enforcement class required | Owning gates |
+|---|---|---|
+| **L0 → L1** | Mandatory policy enforcement: deny-by-default gate on every sanctioned entry point; identity-safe ids + rooted paths | S-G1, S-G2 |
+| **L1 → L2** | Capability enforcement: actions linked to granted capabilities at runtime; profile ceilings clamp budgets; per-actor state namespaces | S-G3, S-G4, S-G5 |
+| **L2 → L3** | Filesystem/network boundary: workspace jail on all writers; egress allowlist; credential isolation + secret scanning | S-G6, S-G7, S-G8, S-G10 |
+| **L3 → L4** | Process isolation: out-of-process actor boundary + IPC contract tests + kill switch. ⚠ Only after amending PRODUCT.md §8 non-goal #6 | decision amendment + S-G9 |
+| **L4 → L5** | Multi-agent isolation + audit: grant attenuation proof, aggregate budgets across agents, tamper-evident attribution chain | S-G11, S-G12, S-G13 (+ S-G14 before any cross-run learning) |
+
+**Upgrade law** — each item is a merge-blocking review criterion:
+
+1. **No skip-ahead.** Code, roadmap phases, or docs *enacting* level N+1
+   mechanisms are rejected while level N's gates are not green. Building the
+   cage after the tiger is already loose is precisely the failure mode this
+   rule exists to prevent.
+2. **Promotion is a recorded human decision** citing the green gate tests —
+   the same discipline as destructive recovery (CONTAINMENT §8, rule 4).
+3. **One direction per subsystem.** Demotions require an incident record;
+   silence is not a demotion.
+4. **Exposure never widens with an open P0** against the current level's
+   surface — today TM-01/TM-13 pin SDE below L1 regardless of appetite.
 
 ---
 
