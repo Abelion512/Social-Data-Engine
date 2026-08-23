@@ -10,6 +10,8 @@ Covers the bounded-loop audit findings (PRD §7 / FR-LOOP-001..003):
 - loop override surface contains only collection-parameter axes (the
   FR-LOOP-003 axis audit — intent fields must be absent)
 - ADJUST_GATE is tighten-only by contract (SDD invariant 3)
+- a loop whose persisted state carries a terminal `outcome` is honored on
+  rerun: zero new iterations/collections, saved result returned verbatim
 
 All tests are deterministic mocks: no browser, no network, no LLM.
 
@@ -223,6 +225,8 @@ def test_resume_skips_recorded_iterations():
         pipe2.run("v1", URL)
         assert pipe2.last_job_id == job_id, "resume must attach to same job"
         assert collect_calls["n"] == 3, "resume re-executed iterations!"
+        assert pipe2.last_outcome == LoopOutcome.PARTIAL_SUCCESS, \
+            "terminal outcome must survive rerun verbatim (not reclassified)"
         lines2 = [json.loads(l) for l in mfile.read_text().splitlines() if l.strip()]
         assert [d["iteration"] for d in lines2] == [1, 2, 3], \
             "resume appended duplicate manifest lines"
@@ -282,6 +286,148 @@ def test_exception_classifies_failed_and_re_raises():
     print("PASS: test_exception_classifies_failed_and_re_raises")
 
 
+# ── Terminal-state resume: finished loops never execute again ───────────────
+
+def test_resume_task_complete_is_terminal():
+    """TASK_COMPLETE on disk → rerun executes nothing, returns the saved result."""
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        calls = {"collect": 0}
+
+        def collector(video_id, url, **kw):
+            calls["collect"] += 1
+            return []
+
+        states = iter([_m(coverage=0.96, partial=False)])  # stable at iter 1
+
+        def processor(existing, base_dir, **kw):
+            if not kw.get("iteration"):
+                return _m(coverage=0.40)  # observe existing: unstable
+            return next(states)
+
+        pipe = SelfHealingPipeline(base_dir=base, collector=collector,
+                                   processor=processor, max_iter=3,
+                                   sleep_between=0, state_dir=base / "state")
+        first = pipe.run("v1", URL)
+        assert pipe.last_outcome == LoopOutcome.TASK_COMPLETE
+        job_id = pipe.last_job_id
+        assert calls["collect"] == 1
+
+        state_path = base / "state" / "v1.json"
+        state_before = state_path.read_text(encoding="utf-8")
+        mfile = base / "data" / "manifests" / "v1.improve.jsonl"
+        lines_before = [json.loads(l) for l in mfile.read_text().splitlines()
+                        if l.strip()]
+
+        # --- rerun against the finished loop: nothing may execute ---
+        def collector_rerun(video_id, url, **kw):
+            calls["collect"] += 1
+            raise AssertionError("collection attempted on a finished loop")
+
+        def processor_rerun(existing, base_dir, **kw):
+            raise AssertionError("processing attempted on a finished loop")
+
+        pipe2 = SelfHealingPipeline(base_dir=base, collector=collector_rerun,
+                                    processor=processor_rerun, max_iter=3,
+                                    sleep_between=0, state_dir=base / "state")
+        again = pipe2.run("v1", URL)
+        assert pipe2.last_outcome == LoopOutcome.TASK_COMPLETE
+        assert pipe2.last_job_id == job_id, "job identity must survive"
+        assert calls["collect"] == 1, "rerun collected!"
+        assert again.coverage == first.coverage, "last metrics must survive"
+        assert again.partial == first.partial
+        assert state_path.read_text(encoding="utf-8") == state_before, \
+            "terminal resume rewrote loop state"
+        lines_after = [json.loads(l) for l in mfile.read_text().splitlines()
+                       if l.strip()]
+        assert lines_after == lines_before, "rerun appended manifest lines"
+    print("PASS: test_resume_task_complete_is_terminal")
+
+
+def test_resume_budget_exhausted_is_terminal():
+    """BUDGET_EXHAUSTED on disk → rerun neither collects nor replans."""
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        calls = {"collect": 0, "replanned": 0}
+
+        def collector(video_id, url, **kw):
+            calls["collect"] += 1
+            return []
+
+        # keeps improving (+0.15 each round) but never reaches 0.95 → budget out
+        def processor(existing, base_dir, **kw):
+            if not kw.get("iteration"):
+                return _m(coverage=0.40)
+            cov = min(0.90, 0.40 + 0.15 * kw["iteration"])
+            return _m(coverage=cov, partial=True)
+
+        pipe = SelfHealingPipeline(base_dir=base, collector=collector,
+                                   processor=processor, max_iter=3,
+                                   sleep_between=0, state_dir=base / "state")
+        first = pipe.run("v1", URL)
+        assert pipe.last_outcome == LoopOutcome.BUDGET_EXHAUSTED
+        job_id = pipe.last_job_id
+        n_first = calls["collect"]
+        assert n_first > 0
+
+        def processor_rerun(existing, base_dir, **kw):
+            calls["replanned"] += 1
+            raise AssertionError("replan attempted on an exhausted loop")
+
+        pipe2 = SelfHealingPipeline(base_dir=base, collector=collector,
+                                    processor=processor_rerun, max_iter=3,
+                                    sleep_between=0, state_dir=base / "state")
+        again = pipe2.run("v1", URL)
+        assert pipe2.last_outcome == LoopOutcome.BUDGET_EXHAUSTED
+        assert pipe2.last_job_id == job_id
+        assert calls["collect"] == n_first, "rerun collected!"
+        assert calls["replanned"] == 0, "rerun replanned!"
+        assert again.coverage == first.coverage
+    print("PASS: test_resume_budget_exhausted_is_terminal")
+
+
+def test_resume_failed_is_terminal():
+    """FAILED on disk → rerun neither retries nor raises; classification holds."""
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        calls = {"collect": 0, "processed": 0}
+
+        def collector_boom(video_id, url, **kw):
+            calls["collect"] += 1
+            raise RuntimeError("browser exploded")
+
+        def processor_observe(existing, base_dir, **kw):
+            return _m(coverage=0.40)
+
+        pipe = SelfHealingPipeline(base_dir=base, collector=collector_boom,
+                                   processor=processor_observe,
+                                   max_iter=2, sleep_between=0,
+                                   state_dir=base / "state")
+        try:
+            pipe.run("v1", URL)
+            raise AssertionError("expected RuntimeError")
+        except RuntimeError:
+            pass
+        job_id = pipe.last_job_id
+        n_first = calls["collect"]
+
+        def processor_rerun(existing, base_dir, **kw):
+            calls["processed"] += 1
+            raise AssertionError("failed loop was retried on rerun")
+
+        pipe2 = SelfHealingPipeline(base_dir=base,
+                                    collector=lambda *a, **k: [],
+                                    processor=processor_rerun, max_iter=2,
+                                    sleep_between=0, state_dir=base / "state")
+        result = pipe2.run("v1", URL)  # must NOT raise, NOT retry
+        assert pipe2.last_outcome == LoopOutcome.FAILED
+        assert pipe2.last_job_id == job_id
+        assert calls["collect"] == n_first, "rerun retried the collection!"
+        assert calls["processed"] == 0, "rerun processed!"
+        assert result.coverage == 0.40  # last observed snapshot preserved
+    print("PASS: test_resume_failed_is_terminal")
+
+
 def test_torn_manifest_tail_is_ignorable():
     """A crash mid-append leaves a torn JSON line; resume must not die on it."""
     with tempfile.TemporaryDirectory() as td:
@@ -311,6 +457,9 @@ def main():
     test_resume_skips_recorded_iterations()
     test_resume_mid_loop_continues_at_saved_position()
     test_exception_classifies_failed_and_re_raises()
+    test_resume_task_complete_is_terminal()
+    test_resume_budget_exhausted_is_terminal()
+    test_resume_failed_is_terminal()
     test_torn_manifest_tail_is_ignorable()
     print("\nAll loop-state tests passed ✅")
 

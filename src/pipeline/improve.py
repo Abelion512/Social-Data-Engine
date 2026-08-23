@@ -274,12 +274,30 @@ class SelfHealingPipeline:
         file raises ``CheckpointCorrupt`` (fail-closed; never silently
         restarted — recovery is a human decision, Constitution §3).
 
+        A persisted state that already carries a terminal ``outcome`` is
+        honored verbatim: rerunning returns the recorded result without
+        executing any further iteration, collection, or state rewrite —
+        ``job_id``, ``outcome`` and last metrics survive untouched.
+
         The terminal classification lands on ``self.last_outcome`` as one of
         ``LoopOutcome.ALL`` and maps additively into the run lifecycle via
         ``lifecycle_for_loop_outcome`` (FR-RUN-001 discipline).
         """
         store = LoopStateStore(self.state_dir / f"{video_id}.json")
         saved = store.load()  # CheckpointCorrupt propagates — fail closed
+        if saved is not None and saved.outcome:
+            # Terminal loop state on disk (LoopOutcome.TERMINAL == ALL):
+            # honor it — no further iteration, no collection, no state
+            # rewrite. Unknown outcome markers fail closed to FAILED while
+            # staying terminal (never guess into more work, Constitution §3).
+            outcome = saved.outcome if saved.outcome in LoopOutcome.ALL \
+                else LoopOutcome.FAILED
+            logger.info("[improve] %s already terminal (%s → %s) — "
+                        "no further iterations", video_id, outcome,
+                        lifecycle_for_loop_outcome(outcome))
+            self.last_outcome = outcome
+            self.last_job_id = saved.job_id
+            return self._metrics_from_state(saved)
         if saved is not None:
             job_id = saved.job_id
             start_iteration = saved.next_iteration
@@ -424,6 +442,29 @@ class SelfHealingPipeline:
             last_metrics=vars(metrics) if hasattr(metrics, "__dict__") else {},
             outcome=outcome,
         ))
+
+    def _metrics_from_state(self, saved: LoopState) -> PipelineMetrics:
+        """Rebuild the last observed metrics from durable loop state."""
+        snap = dict(saved.last_metrics)
+        try:
+            return PipelineMetrics(
+                video_id=saved.video_id,
+                reported=int(snap.get("reported", 0)),
+                captured=int(snap.get("captured", 0)),
+                coverage=float(snap.get("coverage", 0.0)),
+                avg_quality=float(snap.get("avg_quality", 0.0)),
+                dup_rate=float(snap.get("dup_rate", 0.0)),
+                partial=bool(snap.get("partial", True)),
+                stall_reason=str(snap.get("stall_reason", "")),
+                collected_at=str(snap.get("collected_at", "")),
+            )
+        except (TypeError, ValueError):
+            # Degraded snapshot: surface loudly instead of guessing into a
+            # fabricated "good" result (fail-closed, Constitution §3).
+            raise ValueError(
+                f"loop state for {saved.video_id} holds an unusable "
+                "last_metrics snapshot"
+            ) from None
 
     def _finish(self, video_id: str, job_id: str, next_iteration: int,
                 overrides: Dict[str, Any], m: PipelineMetrics,
