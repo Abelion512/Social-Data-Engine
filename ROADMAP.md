@@ -9,6 +9,17 @@ Ordering rationale: **enforcement before expansion** — no second provider, no
 packaging push, and no wider agent exposure until capability evaluation and
 provenance guarantees close the contract's open promises.
 
+**Security overlay (PR #8).** Autonomy increases are additionally gated by the
+security maturity ladder (`docs/SECURITY-THREAT-MODEL.md` §1,
+`docs/architecture/CONTAINMENT.md`, `DECISIONS.md` D-014): a phase completes
+only if its S-gates are green, and **no exposure widening happens before
+S-G1 + S-G2 land.** The next implementation PR is pinned: **PR #9 = S-G2 +
+gate-default + ceiling clamps + secret-scanner stub** (threat model §3.D).
+Transitions themselves are bound by the **upgrade law** (threat model §1.1,
+`DECISIONS.md` D-015): implementing or scheduling level N+1 mechanisms while
+level N's S-gates are not green is a merge-blocking violation. Asset handling
+follows threat model §0.1; trust zones follow §0.2.
+
 ---
 
 ## Phase 0 — Acquisition foundation ✅ DONE (evidence, not spec)
@@ -41,11 +52,21 @@ Scope (all MUST unless noted):
    preferences-source audit check (FR-PREF-001).
 5. Version stamps on serialized `RunInput`/`RunSummary` (FR-INT-002) —
    additive fields riding the Phase 2 gate/summary changes.
+6. **S-G2 (security):** identity-safe identifiers (slug charset for
+   `job_id`/`run_id`/`video_id`) + workspace-rooted path resolution in
+   `RunContext.create` / improve-manifest builders — closes P0 TM-01/TM-13.
+7. **S-G1 part 1 (security):** harness installs a deny-all profile by default;
+   trusted-operator mode becomes an explicit named switch (removed at Phase 3
+   CLI unification).
+8. **S-G4 (security):** profile ceiling clamps on budget axes (caller may
+   lower, never exceed) — closes TM-04's escalation half.
 
 Exit gate: evaluator table-driven tests green incl. unknown-capability→DENY and
 evaluator-exception→DENY; gated run produces `policy_denied` summary without any
 checkpoint side-effects; verification command passes on synthetic fixtures and
-existing curated data.
+existing curated data; **plus security exit:** traversal-id and rooted-path
+tests prove hostile identifiers cannot escape `state_dir`/`data_dir`, and a
+profile-less harness run denies by default (D-014 rule 2).
 
 ## Phase 3 — Production acquisition path through the contract
 **Goal:** the real browser-backed page source runs behind `TikTokAcquisitionActor`;
@@ -96,12 +117,36 @@ example (FR-INT-004), secret scanner for contract payloads (FR-SEC-004).
 
 Exit gate: fresh-environment install → agent example run → dataset+summary+manifest.
 
+## Security gates (S-gates) — cross-phase overlay
+
+Owned by the ladder in `docs/SECURITY-THREAT-MODEL.md` §1; each gate cites its
+closed threats (TM-xx). A phase's exit requires its scheduled gates.
+
+| Gate | Scope | Closes | Scheduled |
+|---|---|---|---|
+| S-G1 | Mandatory deny-by-default gate on every sanctioned entry point; import audit; CLI unified behind harness | TM-02, TM-24 | Phase 2 (part 1) → Phase 3 (CLI) |
+| S-G2 | Identity-safe identifiers + workspace-rooted path resolution | TM-01, TM-13 (**P0**) | Phase 2 / PR #9 |
+| S-G3 | Action↔capability linkage at engine insertion points 2 & 4 | TM-03, TM-23 | Phase 2→3 |
+| S-G4 | Profile ceiling clamps on budget axes | TM-04 | Phase 2 / PR #9 |
+| S-G5 | Checkpoint↔actor binding on resume + single-writer lock + per-actor state namespaces | TM-07, TM-08 | Phase 3 |
+| S-G6 | Filesystem jail for all writers (symlink-escape refusal) | §2.5 residual | Phase 3 |
+| S-G7 | Egress allowlist + dedicated automation profile + route-pattern scoping + log redaction | TM-17, TM-18, TM-20 | Phase 3→4 |
+| S-G8 | Mechanical secret scanner over contract payloads (pulled forward from Phase 6) | TM-05, TM-20, TM-21 | stub Phase 2/PR #9, full Phase 3 |
+| S-G9 | Out-of-process actor boundary + IPC contract tests ⚠ requires amending PRODUCT.md §8 first | TM-03 residual | L4 only |
+| S-G10 | Wall-clock/network budget axes consumed pre-dispatch; kill-switch verb | TM-06 | Phase 3 |
+| S-G11 | Sub-agent grant attenuation proof (child ⊆ parent ∩ profile) | threat model §2.13 | L5 only |
+| S-G12 | Aggregate budget axis across loops/agents | TM-04 residual | Phase 4→L5 |
+| S-G13 | Evidence integrity: hash-chained (later HMAC) manifests/checkpoints; forged-state refusal | TM-14 | Phase 4 |
+| S-G14 | Lesson-integrity: accept/reject verdicts; captured data treated as untrusted before cross-run learning | TM-15, TM-16 | Phase 4 (blocks cross-run learning exit) |
+
 ## Deferred backlog (LATER tier)
 Preferences store w/ audit trail · REQUIRE_APPROVAL workflow + approval store
 (Constitution §10) · cross-run strategy learning · actor registry · signing of
 manifests · query/export surfaces beyond CSV experiment · run-inspection
 command + agent-trace persistence (FR-TRANS-003/004) · named policy profiles
-(FR-POL-005) · declared aggregate loop-budget axis (SDD §6 limitation).
+(FR-POL-005) · declared aggregate loop-budget axis (SDD §6 limitation) ·
+doc/code drift reconciliation for merged evaluator work (TM-25: refresh
+CURRENT-STATE/SRS labels citing `tests/test_policy_evaluator.py`).
 
 ## Never (OUT tier)
 Scheduler/autonomous loop engine · sandbox/process isolation · dashboards/cloud ·
