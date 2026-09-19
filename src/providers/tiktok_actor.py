@@ -232,26 +232,34 @@ async def run_live(video_url: str, *, max_items: int = 200, max_pages=None,
 
     session, video_id = await connect_production_page(
         video_url, force_camoufox=force_camoufox)
-    actor = TikTokAcquisitionActor(
-        page_source=CollectorApiPageSource(session.page, video_id, count=count))
-    # S-G1 part 1 (threat model §3.D item 3): the harness DEFAULT is now a
-    # deny-all profile. The legacy CLI/live path predates gate unification,
-    # so it opts out via the explicit keyword-only trusted_operator switch —
-    # the documented Phase 2 window escape hatch (removed at Phase 3 CLI
-    # unification; tracked as TM-02/TM-24 residual).
-    harness = ActorHarness(print_fn=print_fn, state_dir=state_dir, data_dir=data_dir,
-                           trusted_operator=True)
-    config = {"max_items": int(max_items)}
-    if max_pages is not None:
-        config["max_pages"] = int(max_pages)
-    run_input = RunInput(
-        actor_id=actor.actor_id,
-        actor_version=actor.actor_version,
-        provider=actor.provider_name,
-        target_url=video_url,
-        payload={"video_id": video_id},
-        config=config,
-        job_id=job_id,
-    )
-    summary = await harness.run(actor, run_input)
+    try:
+        actor = TikTokAcquisitionActor(
+            page_source=CollectorApiPageSource(session.page, video_id, count=count))
+        # S-G1 part 1 (threat model §3.D item 3): the harness DEFAULT is now a
+        # deny-all profile. The legacy CLI/live path predates gate unification,
+        # so it opts out via the explicit keyword-only trusted_operator switch —
+        # the documented Phase 2 window escape hatch (removed at Phase 3 CLI
+        # unification; tracked as TM-02/TM-24 residual).
+        harness = ActorHarness(print_fn=print_fn, state_dir=state_dir, data_dir=data_dir,
+                               trusted_operator=True)
+        config = {"max_items": int(max_items)}
+        if max_pages is not None:
+            config["max_pages"] = int(max_pages)
+        run_input = RunInput(
+            actor_id=actor.actor_id,
+            actor_version=actor.actor_version,
+            provider=actor.provider_name,
+            target_url=video_url,
+            payload={"video_id": video_id},
+            config=config,
+            job_id=job_id,
+        )
+        summary = await harness.run(actor, run_input)
+    except BaseException:
+        # The session was already connected but never handed back to the
+        # caller (returned only on success) — detach it here, otherwise a
+        # failed/cancelled run leaks a live browser. close() is attach-safe:
+        # it never terminates the operator's own browser (CDP detaches).
+        await session.close()
+        raise
     return summary, session

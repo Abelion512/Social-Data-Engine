@@ -357,7 +357,7 @@ class ActorHarness:
         if not is_valid_identifier(actor.actor_id):
             raise ValueError(
                 f"actor {type(actor).__name__} declares invalid or missing "
-f"actor_id ({actor.actor_id!r}); expected {_IDENTIFIER_DOC}"
+                f"actor_id ({actor.actor_id!r}); expected {_IDENTIFIER_DOC}"
             )
         if not _valid_version(actor.actor_version):
             raise ValueError(

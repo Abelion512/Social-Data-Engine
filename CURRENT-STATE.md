@@ -72,11 +72,17 @@ this document's standard (merged + proven) and must not be cited as such.
 
 ## 5. Test inventory (deterministic gates, all green as of this session)
 
-`test_policy_models` (8) · `test_acquisition_runtime` (15) ·
-`test_checkpoint_fail_closed` (4) · `test_tiktok_pagination` (11) ·
-`test_acquisition_hardening` (11) · dedup/quality (8+4) ·
-`test_pipeline` (13) · `test_self_improvement` · `test_actor_harness` (22, on PR #5 branch) ·
-`py_compile` over `src/**` + `tests/**`.
+`test_acquisition_hardening` (11) · `test_acquisition_runtime` (15) ·
+`test_actor_harness` (22) · `test_canonical_roundtrip` (8) ·
+`test_checkpoint_fail_closed` (4) · `test_dedup` (4) · `test_loop_state` (13) ·
+`test_pipeline` (13) · `test_policy_evaluator` (18) · `test_policy_models` (8) ·
+`test_security_gates_sg2` (17) · `test_self_improvement` (11) ·
+`test_tiktok_pagination` (11) · dedup/quality (8) ·
+`py_compile` over `src/**` + `tests/**` and `bash -n`/`zsh -n run.sh`.
+
+CI glob-discovers every `tests/test_*.py` + `tests/run_*_tests.py`, so a suite
+is gated the moment it lands (previously only 2 of 14 ran). Deterministic only:
+the live-test gate status below is unchanged by this inventory.
 
 Live-test gate: last full desktop live run = run #2 (see Constitution header /
 `docs/VERIFICATION.md`); PR #5 honestly recorded it as not-run (headless env,

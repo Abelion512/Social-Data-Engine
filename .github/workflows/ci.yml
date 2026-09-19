@@ -68,10 +68,22 @@ jobs:
         run: zsh -n run.sh
 
       # ── 4. test suites (self-contained, stdlib-only) ─────────────────────
-      - name: Run dedup + quality tests
-        run: python tests/run_dedup_quality_tests.py
-      - name: Run self-improvement tests
-        run: python tests/test_self_improvement.py
+      # Every deterministic suite under tests/ runs, discovered by glob so a
+      # new suite is gated the moment it lands (previously only 2 of 13 ran).
+      - name: Run deterministic test suites
+        run: |
+          set -eu
+          found=0
+          for suite in tests/test_*.py tests/run_*_tests.py; do
+            [ -e "$suite" ] || continue
+            found=$((found + 1))
+            echo "▶ $suite"
+            python "$suite"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "❌ no test suites discovered under tests/"; exit 1
+          fi
+          echo "✅ all $found deterministic suites passed"
 
       # ── 5. security: no plaintext credentials ────────────────────────────
       - name: No LINKEDIN password/username in source
