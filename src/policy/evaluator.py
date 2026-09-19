@@ -130,11 +130,28 @@ class PolicyProfile:
     Smallest reasonable representation: stdlib frozen dataclass, no
     YAML/JSON loading (SDD does not require it). An empty rules tuple is a
     valid deny-everything profile.
+
+    S-G4 budget ceilings (threat model §3.D item 4): the optional ``max_*``
+    axes cap the RunOptions budget values the harness will accept — a caller
+    may LOWER a budget below its ceiling, never exceed it. ``None`` means no
+    ceiling on that axis. Ceilings are enforced by the harness BEFORE
+    execution; the evaluator itself does not consume them.
     """
 
     name: str
     version: str
     rules: Tuple[PolicyRule, ...] = ()
+    max_items: Optional[int] = None
+    max_pages: Optional[int] = None
+    max_retries: Optional[int] = None
+    max_empty_retries: Optional[int] = None
+    max_stalls: Optional[int] = None
+    max_parse_retries: Optional[int] = None
+
+    _CEILING_AXES = (
+        "max_items", "max_pages", "max_retries",
+        "max_empty_retries", "max_stalls", "max_parse_retries",
+    )
 
     def __post_init__(self):
         if not isinstance(self.name, str) or not self.name.strip():
@@ -146,6 +163,15 @@ class PolicyProfile:
             )
         if not isinstance(self.rules, tuple) or not all(isinstance(r, PolicyRule) for r in self.rules):
             raise ValueError("PolicyProfile.rules must be a tuple of PolicyRule instances")
+        for axis in self._CEILING_AXES:
+            value = getattr(self, axis)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(
+                    f"PolicyProfile.{axis} ceiling must be an int >= 0 or None, "
+                    f"got {value!r}"
+                )
         seen = set()
         for rule in self.rules:
             if rule.key in seen:
@@ -156,7 +182,7 @@ class PolicyProfile:
             seen.add(rule.key)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "name": self.name,
             "version": self.version,
             "rules": [
@@ -172,6 +198,10 @@ class PolicyProfile:
                 for r in self.rules
             ],
         }
+        # Additive S-G4 ceilings (legacy readers ignore unknown keys).
+        for axis in self._CEILING_AXES:
+            d[axis] = getattr(self, axis)
+        return d
 
 
 @dataclass(frozen=True)

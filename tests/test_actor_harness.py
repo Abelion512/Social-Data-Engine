@@ -69,10 +69,14 @@ def read_lines(path) -> List[dict]:
 
 
 def make_harness(tmpdir: str) -> ActorHarness:
+    # trusted_operator=True: these tests exercise the CONTRACT/runtime path,
+    # not gate defaults. Gate-default denial is proven in
+    # tests/test_security_gates_sg2.py.
     return ActorHarness(
         state_dir=str(Path(tmpdir) / "state"),
         data_dir=str(Path(tmpdir) / "data"),
         print_fn=lambda *_: None,
+        trusted_operator=True,
     )
 
 
@@ -381,7 +385,8 @@ def test_generic_contract_carries_no_provider_specific_fields():
         rt = AcquisitionRuntime(print_fn=lambda *_: None)
         harness_a = ActorHarness(runtime=rt, print_fn=lambda *_: None,
                                  state_dir=str(Path(tmpdir) / "sa"),
-                                 data_dir=str(Path(tmpdir) / "da"))
+                                 data_dir=str(Path(tmpdir) / "da"),
+                                 trusted_operator=True)
         s_a = run(harness_a.run(FakeActor(), make_input(FakeActor())))
 
         class OtherShapeActor(AcquisitionActor):
@@ -398,7 +403,8 @@ def test_generic_contract_carries_no_provider_specific_fields():
 
         harness_b = ActorHarness(runtime=rt, print_fn=lambda *_: None,
                                  state_dir=str(Path(tmpdir) / "sb"),
-                                 data_dir=str(Path(tmpdir) / "db"))
+                                 data_dir=str(Path(tmpdir) / "db"),
+                                 trusted_operator=True)
         other = OtherShapeActor()
         s_b = run(harness_b.run(other, make_input(other, provider="other")))
         assert s_a.provider == "fakeprovider" and s_b.provider == "other"
@@ -483,7 +489,8 @@ def test_tiktok_actor_through_shared_runtime_resume_intact():
         rt = AcquisitionRuntime(print_fn=lambda *_: None)   # ONE shared runtime
         harness = ActorHarness(runtime=rt, print_fn=lambda *_: None,
                                state_dir=str(Path(tmpdir) / "s"),
-                               data_dir=str(Path(tmpdir) / "d"))
+                               data_dir=str(Path(tmpdir) / "d"),
+                               trusted_operator=True)
 
         actor = TikTokAcquisitionActor(page_source=_historical_script_pages())
         inp = make_input(
@@ -637,7 +644,8 @@ def test_async_real_source_through_shared_runtime_resume_intact():
         rt = AcquisitionRuntime(print_fn=lambda *_: None)   # ONE shared runtime
         harness = ActorHarness(runtime=rt, print_fn=lambda *_: None,
                                state_dir=str(Path(tmpdir) / "s"),
-                               data_dir=str(Path(tmpdir) / "d"))
+                               data_dir=str(Path(tmpdir) / "d"),
+                               trusted_operator=True)
         pages = _script_pages(30, 10)
 
         async def real_shaped_source(cursor, page_index):

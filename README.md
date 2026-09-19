@@ -124,9 +124,17 @@ scripts/
 └── ...                       # Browser / environment probes
 
 tests/
-├── test_tiktok_pagination.py # Pagination / checkpoint invariants
+├── test_tiktok_pagination.py  # Pagination / checkpoint invariants
 ├── test_acquisition_hardening.py
 ├── test_acquisition_runtime.py # Provider-independent runtime core tests
+├── test_checkpoint_fail_closed.py
+├── test_actor_harness.py      # Harness / actor contract + identity binding
+├── test_policy_models.py      # Policy vocabulary + bounded budgets
+├── test_policy_evaluator.py   # Deny-by-default evaluation table
+├── test_security_gates_sg2.py # Identity-safe ids + rooted path resolution
+├── test_loop_state.py         # Durable loop state / resume semantics
+├── test_canonical_roundtrip.py # Canonical persist → load fidelity
+├── test_pipeline.py
 ├── test_dedup.py
 ├── test_self_improvement.py
 └── run_dedup_quality_tests.py
@@ -195,24 +203,35 @@ These are live verification results from the development environment. CI current
 
 ### Deterministic tests
 
-```bash
-source .venv/bin/activate
+The suites are self-contained scripts (stdlib-only, no `pytest`, no network or
+display required). Run each one directly — every suite exits non-zero on
+failure:
 
-python -m pytest tests/test_tiktok_pagination.py -v
-python -m pytest tests/test_acquisition_hardening.py -v
-python -m pytest tests/test_acquisition_runtime.py -v
-python -m pytest tests/test_dedup.py -v
-python -m pytest tests/test_self_improvement.py -v
-python tests/run_dedup_quality_tests.py
+```bash
+python tests/test_tiktok_pagination.py
+python tests/test_acquisition_runtime.py
+python tests/test_policy_evaluator.py
+# ... or run them all, the way CI does:
+for suite in tests/test_*.py tests/run_*_tests.py; do python "$suite" || break; done
 ```
 
-Current local verification reported:
+Current local verification reported (14 suites, 163 assertions):
 
 ```text
-test_tiktok_pagination.py       11 passed
 test_acquisition_hardening.py   11 passed
-run_dedup_quality_tests.py      41 passed
-test_self_improvement.py         8 passed
+test_acquisition_runtime.py     15 passed
+test_actor_harness.py           22 passed
+test_canonical_roundtrip.py      8 passed
+test_checkpoint_fail_closed.py   4 passed
+test_dedup.py                    4 passed
+test_loop_state.py              13 passed
+test_pipeline.py                13 passed
+test_policy_evaluator.py        18 passed
+test_policy_models.py            8 passed
+test_security_gates_sg2.py      17 passed
+test_self_improvement.py        11 passed
+test_tiktok_pagination.py       11 passed
+run_dedup_quality_tests.py       8 passed
 ```
 
 ### Live test

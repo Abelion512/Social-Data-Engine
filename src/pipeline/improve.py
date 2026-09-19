@@ -43,6 +43,7 @@ import time
 import uuid
 
 from src.runtime.checkpoint import CheckpointCorrupt  # re-exported for callers
+from src.runtime.context import require_slug_identifier
 from src.runtime.loop_state import (
     LOOP_STATE_SCHEMA_VERSION,
     LoopOutcome,
@@ -282,7 +283,13 @@ class SelfHealingPipeline:
         The terminal classification lands on ``self.last_outcome`` as one of
         ``LoopOutcome.ALL`` and maps additively into the run lifecycle via
         ``lifecycle_for_loop_outcome`` (FR-RUN-001 discipline).
+
+        S-G2 (threat model §3.D item 1): ``video_id`` is validated against the
+        strict slug charset BEFORE any state file or manifest path is even
+        NAMED — a traversal identifier raises ``ValueError`` before any
+        filesystem mutation can occur.
         """
+        require_slug_identifier(video_id, "video_id")
         store = LoopStateStore(self.state_dir / f"{video_id}.json")
         saved = store.load()  # CheckpointCorrupt propagates — fail closed
         if saved is not None and saved.outcome:
@@ -400,6 +407,8 @@ class SelfHealingPipeline:
     # ── durable loop position (LoopState) ──────────────────────────────────
 
     def manifest_path(self, video_id: str):
+        # S-G2: manifest path builders refuse hostile identifiers outright.
+        require_slug_identifier(video_id, "video_id")
         return self.base_dir / "data" / "manifests" / f"{video_id}.improve.jsonl"
 
     def _recorded_iterations(self, video_id: str, job_id: str) -> set:
@@ -433,6 +442,7 @@ class SelfHealingPipeline:
     def _save_state(self, video_id: str, job_id: str, next_iteration: int,
                     overrides: Dict[str, Any], metrics: PipelineMetrics,
                     outcome: str = "") -> None:
+        require_slug_identifier(video_id, "video_id")
         store = LoopStateStore(self.state_dir / f"{video_id}.json")
         store.save(LoopState(
             video_id=video_id,

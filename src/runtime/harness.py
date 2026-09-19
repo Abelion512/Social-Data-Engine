@@ -28,6 +28,8 @@ scheduling, autonomous loops, secret transport, approval workflows
 """
 from __future__ import annotations
 
+import dataclasses
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
@@ -38,13 +40,86 @@ from src.policy.models import (
     PolicyDecision,
     is_valid_identifier,
 )
+from src.runtime.context import require_slug_identifier
 from src.policy.evaluator import PolicyDecisionRecord, PolicyEvaluator, PolicyProfile
 from src.runtime.context import RunContext
 from src.runtime.engine import AcquisitionRuntime, RunOptions, RunSummary
 from src.runtime.actor import AcquisitionActor
 from src.runtime.termination import classify_termination, lifecycle_for_outcome
 
-__all__ = ["RunInput", "ActorHarness"]
+__all__ = ["RunInput", "ActorHarness", "SECRET_SCAN_PATTERNS",
+           "scan_contract_for_secrets"]
+
+# ── Secret-scanner stub (S-G8 stub per threat model §3.D item 5 / FR-SEC-004)
+#
+# DETERMINISTIC pattern pass over ``RunInput.payload``/``config`` — no LLM,
+# no network, no heuristics beyond fixed regexes. This is a STUB: it catches
+# the defined secret shapes loudly at contract construction and makes NO
+# completeness claim. The full mechanical scanner stays scheduled S-G8.
+SECRET_SCAN_PATTERNS: Tuple[Tuple[str, "re.Pattern[str]"], ...] = (
+    # key=value style assignment to a secret-like name ("password=hunter2")
+    ("secret_like_assignment", re.compile(
+        r"(?i)\b(password|passwd|api[_-]?key|apikey|access[_-]?token|"
+        r"auth[_-]?token|session[_-]?id|sessionid|credential|client[_-]?secret)"
+        r"s?\b\s*[:=]\s*\S")),
+    ("bearer_header", re.compile(r"(?i)\bbearer\s+[a-z0-9._-]{10,}")),
+    ("jwt_shape", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.")),
+    ("aws_access_key_id", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("github_token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b")),
+    ("slack_token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
+    ("openai_style_key", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
+)
+
+# Dict KEYS whose very NAME marks them as secret carriers: any non-empty
+# string content under such a key is refused regardless of its shape.
+_SECRET_KEY_NAME = re.compile(
+    r"(?i)^\s*(x[-_])?(api[_-]?key|apikey|access[_-]?token|auth[_-]?token|"
+    r"secret|client[_-]?secret|password|passwd|pwd|credentials?|"
+    r"session[_-]?id|sessionid|bearer|token)s?\s*$")
+
+
+def _carries_string_content(value) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple)):
+        return any(_carries_string_content(v) for v in value)
+    return False
+
+
+def scan_contract_for_secrets(value, field_name: str, _path: str = "") -> None:
+    """Recursively pattern-scan a contract value; raise on secret-like content.
+
+    Fails LOUDLY (ValueError naming the field and path) BEFORE any run can
+    carry the value into checkpoints, datasets or logs. Scans dict KEYS and
+    string leaves; recurses through dicts/lists. Deterministic by design.
+    """
+    if isinstance(value, dict):
+        for k, v in value.items():
+            # Secret-named keys carrying ANY string content are refused:
+            # shape analysis cannot keep up with token formats, names can.
+            if (isinstance(k, str) and _SECRET_KEY_NAME.match(k)
+                    and _carries_string_content(v)):
+                raise ValueError(
+                    f"{field_name}: secret-like key {k!r} at {_path or '(root)'} "
+                    "carries content — contracts are NOT a secret transport "
+                    "(FR-SEC-004 stub; asset rule §0.1: Critical assets never "
+                    "enter payloads)"
+                )
+            scan_contract_for_secrets(k, field_name, f"{_path}.key({k!r:.64})")
+            child_path = f"{_path}.{k}" if isinstance(k, str) else _path
+            scan_contract_for_secrets(v, field_name, child_path)
+    elif isinstance(value, (list, tuple)):
+        for i, v in enumerate(value):
+            scan_contract_for_secrets(v, field_name, f"{_path}[{i}]")
+    elif isinstance(value, str):
+        for pattern_name, rx in SECRET_SCAN_PATTERNS:
+            if rx.search(value):
+                raise ValueError(
+                    f"{field_name}: secret-like content detected "
+                    f"(pattern '{pattern_name}') at {_path or '(root)'} — "
+                    "contracts are NOT a secret transport (FR-SEC-004 stub; "
+                    "asset rule §0.1: Critical assets never enter payloads)"
+                )
 
 # Keys the harness itself reserves inside RunContext.target provenance.
 _RESERVED_TARGET_KEYS = frozenset({
@@ -53,6 +128,20 @@ _RESERVED_TARGET_KEYS = frozenset({
 })
 
 _IDENTIFIER_DOC = "lowercase dot-namespaced identifier (e.g. 'acquisition.tiktok')"
+
+# S-G1 part 1 (threat model §3.D item 3): the DEFAULT profile installed when
+# no policy is supplied. Empty rules ⇒ every declared capability DENIES
+# ("no_matching_rule"), zero-capability actors DENY via the explicit
+# no-declaration branch — the harness refuses execution unless the operator
+# either supplies an explicit policy or flips the audited trusted_operator
+# switch (Phase 2 window only; removed at Phase 3 CLI unification).
+_DENY_ALL_PROFILE = PolicyProfile(name="deny-all-default", version="0", rules=())
+
+# Int budget axes subject to PolicyProfile ceiling clamps (S-G4 / §3.D item 4).
+_CLAMPABLE_AXES = (
+    "max_items", "max_pages", "max_retries",
+    "max_empty_retries", "max_stalls", "max_parse_retries",
+)
 
 
 def _valid_version(value) -> bool:
@@ -79,9 +168,12 @@ class RunInput:
         statement of WHAT is being run; the harness verifies it matches the
         actor object before execution (fail-closed identity binding)
 
-    NON-SECRET by contract: ``payload`` and ``config`` are provenance/policy
-    context only. Credentials, cookies, tokens and API keys MUST NOT be placed
-    here (same rule as ``CapabilityRequest.metadata``; no scanner exists yet).
+    NON-SECRET by contract AND by enforcement: ``payload``/``config`` are
+    provenance/policy context only and are pattern-scanned for secret-like
+    values at construction (``scan_contract_for_secrets``, FR-SEC-004 stub).
+    Identity fields follow the S-G2 slug charset: ``job_id``/``run_id`` must
+    be lowercase slug identifiers — traversal or absolute-path identifiers
+    fail closed here, before any context or filesystem object can exist.
     """
     actor_id: str
     actor_version: str
@@ -111,8 +203,13 @@ class RunInput:
                 raise ValueError(f"{name} must be a dict with string keys")
         for name in ("job_id", "run_id"):
             v = getattr(self, name)
-            if v is not None and (not isinstance(v, str) or not v.strip()):
-                raise ValueError(f"{name} must be None or a non-empty string")
+            if v is None:
+                continue
+            # S-G2 item 1: strict slug charset, error names the field.
+            require_slug_identifier(v, name)
+        # S-G8 stub: deterministic secret scan over payload/config values.
+        for name in ("payload", "config"):
+            scan_contract_for_secrets(getattr(self, name), name)
 
     def to_dict(self) -> dict:
         return {
@@ -158,18 +255,29 @@ class ActorHarness:
                  print_fn=print,
                  state_dir: str = "state/runs",
                  data_dir: str = "data/runs",
-                 policy: Optional[PolicyProfile] = None):
+                 policy: Optional[PolicyProfile] = None,
+                 *, trusted_operator: bool = False):
         self._runtime = runtime or AcquisitionRuntime(print_fn=print_fn)
         self._print = print_fn
         self.state_dir = state_dir
         self.data_dir = data_dir
-        # Policy gate configuration. None = NO evaluator installed: the
-        # documented trusted-operator mode (D-006) — behavior unchanged for
-        # existing callers. Supplying a PolicyProfile switches the harness
-        # into ENFORCED mode: deny-by-default evaluation runs BEFORE any
-        # execution. There is deliberately no way to pass a profile that
-        # allows-by-default — the evaluator itself has no such mode.
-        self._policy_profile = policy
+        # POLICY GATE DEFAULT (S-G1 part 1 / §3.D item 3): with no explicit
+        # policy the harness installs the empty DENY-ALL profile instead of
+        # silently trusting the caller. Trusted-operator mode survives ONLY
+        # as this explicit keyword-only switch during the Phase 2 window
+        # (removed at Phase 3 CLI unification). Passing BOTH a policy and the
+        # escape hatch is ambiguous intent and fails closed here.
+        if trusted_operator and policy is not None:
+            raise ValueError(
+                "ambiguous harness configuration: supply EITHER an explicit "
+                "policy profile OR trusted_operator=True, not both"
+            )
+        if policy is not None:
+            self._policy_profile = policy          # enforced mode
+        elif trusted_operator:
+            self._policy_profile = None            # documented operator opt-out
+        else:
+            self._policy_profile = _DENY_ALL_PROFILE   # deny-by-default
 
     # ── public entry point ────────────────────────────────────────────────
     async def run(self, actor: AcquisitionActor, run_input: RunInput,
@@ -249,7 +357,7 @@ class ActorHarness:
         if not is_valid_identifier(actor.actor_id):
             raise ValueError(
                 f"actor {type(actor).__name__} declares invalid or missing "
-f"actor_id ({actor.actor_id!r}); expected {_IDENTIFIER_DOC}"
+                f"actor_id ({actor.actor_id!r}); expected {_IDENTIFIER_DOC}"
             )
         if not _valid_version(actor.actor_version):
             raise ValueError(
@@ -397,9 +505,9 @@ f"actor_id ({actor.actor_id!r}); expected {_IDENTIFIER_DOC}"
                     "ambiguous run configuration: pass budget axes either via "
                     "RunInput.config or via RunOptions, not both"
                 )
-            return options
+            return self._apply_ceiling_clamps(options)
         if not run_input.config:
-            return RunOptions()
+            return self._apply_ceiling_clamps(RunOptions())
 
         option_fields = {f: getattr(RunOptions(), f) for f in vars(RunOptions())}
         unknown = sorted(set(run_input.config) - set(option_fields))
@@ -414,4 +522,30 @@ f"actor_id ({actor.actor_id!r}); expected {_IDENTIFIER_DOC}"
                 raise ValueError(f"config.{key} must be an integer, got {value!r}")
             if expected is bool and not isinstance(value, bool):
                 raise ValueError(f"config.{key} must be a boolean, got {value!r}")
-        return RunOptions(**dict(run_input.config))
+        return self._apply_ceiling_clamps(RunOptions(**dict(run_input.config)))
+
+    def _apply_ceiling_clamps(self, options: RunOptions) -> RunOptions:
+        """S-G4 ceiling clamps (§3.D item 4): the caller may LOWER a budget
+        axis below its ceiling but may NEVER exceed it. Applies to explicitly
+        passed RunOptions AND config-projected options alike; every clamp is
+        printed for audit. Clamping happens BEFORE execution — never after."""
+        profile = self._policy_profile
+        if profile is None:
+            return options
+        clamped: Dict[str, int] = {}
+        updates: Dict[str, int] = {}
+        for axis in _CLAMPABLE_AXES:
+            ceiling = getattr(profile, axis, None)
+            if ceiling is None:
+                continue
+            current = getattr(options, axis)
+            if current > ceiling:
+                updates[axis] = ceiling
+                clamped[axis] = current
+        if updates:
+            self._print(
+                f"[harness] budget clamp ({profile.name} v{profile.version}): "
+                + ", ".join(f"{a} {clamped[a]}→{updates[a]}" for a in updates)
+            )
+            return dataclasses.replace(options, **updates)
+        return options

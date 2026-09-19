@@ -120,11 +120,16 @@ class FakeActor(AcquisitionActor):
 
 
 def make_harness(tmpdir: Path, policy=None) -> ActorHarness:
+    # With an explicit policy → enforced mode. Without one → the test opts
+    # into the documented trusted_operator switch (the harness DEFAULT is
+    # deny-all since §3.D item 3; that default is proven in
+    # tests/test_security_gates_sg2.py).
     return ActorHarness(
         state_dir=str(tmpdir / "state"),
         data_dir=str(tmpdir / "data"),
         print_fn=lambda *_: None,
         policy=policy,
+        **({} if policy is not None else {"trusted_operator": True}),
     )
 
 
@@ -350,7 +355,9 @@ def test_12_extra_declared_capabilities_cannot_bypass_evaluation(tmp_path):
 def test_13_zero_capability_actor(tmp_path):
     actor = FakeActor(caps=())
 
-    # trusted-operator mode (no policy): behavior UNCHANGED — still executes
+    # trusted-operator mode (explicit trusted_operator=True switch): behavior
+    # UNCHANGED — still executes. (The no-switch default now DENIES — proven
+    # in tests/test_security_gates_sg2.py.)
     harness_open = make_harness(tmp_path / "open")
     s_open = run(harness_open.run(actor, make_input(actor)))
     assert len(actor.calls) >= 1
