@@ -12,7 +12,8 @@ fail=0
 say() { printf '\n== %s ==\n' "$1"; }
 
 say "1/8 compile all .py"
-"$PY" -m py_compile src/*.py src/*/*.py scripts/*.py tests/*.py || fail=1
+"$PY" -m py_compile src/*.py src/*/*.py scripts/*.py tests/*.py plugins/*/*.py 2>/dev/null || \
+  "$PY" -m py_compile src/*.py src/*/*.py scripts/*.py tests/*.py || fail=1
 
 say "2/8 import + symbol cross-check"
 "$PY" - <<'EOF' || fail=1

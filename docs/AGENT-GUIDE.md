@@ -53,6 +53,41 @@ Add to `requirements.txt`:
 Importing an undeclared package **fails CI** (AST scan of `src/` + `scripts/`,
 import-name → dist-name mapping included for the common spellings).
 
+## Pluggable providers — tambah platform tanpa sentuh core
+
+Registry + URL-dispatch sudah jadi kontrak inti (`src/harness/registry.py`):
+platform baru = satu file plugin yang meregistrasi adapter + URL regex.
+
+**Cara tercepat (copy-paste-modify):**
+
+```bash
+cp -r plugins/example plugins/myplatform
+mv plugins/myplatform/example.py plugins/myplatform/myplatform.py
+# edit 3 bagian: URL_PATTERN, probe(), collect()
+```
+
+Kontrak plugin per modul:
+
+| Bagian | Wajib | Catatan |
+|---|---|---|
+| `URL_PATTERN` | ✅ | regex routing URL → adapter (first match wins; registrasi terakhir override) |
+| adapter | ✅ | subclass `ProviderAdapter` (atau `AgentProvider` untuk browser agent); `collect()` **wajib** mengembalikan `List[Observation]` canonical — satu schema untuk semua platform |
+| registrasi | ✅ | `harness.register("myplatform", URL_PATTERN, MyAdapter())` saat import |
+| deps | ✅ | import pihak-3 harus ada di `requirements.txt` (gate CI step 8 scan `plugins/` juga) |
+| test | ✅ | minimal 1 suite assert di `tests/` (contoh: `tests/test_plugins.py`) |
+
+Verifikasi tanpa browser:
+
+```bash
+bash scripts/preflight.sh                          # semua gate
+.venv/bin/python -m src.tiktok_linkedin --list-plugins   # introspeksi registry
+```
+
+`--list-plugins` menampilkan provider terdaftar + modul plugin + **load errors**;
+plugin yang gagal import tidak pernah membungkam run — errornya tampil, author
+memperbaiki. Direktori plugin tambahan: env `PLUGIN_PATHS` (dipisah `:`).
+Demo end-to-end deterministic: plugin `example` (routing, probe, collect).
+
 ## Optional agent tooling (verified 2026-09-19)
 
 | Tool | What it gives an agent here | Enable (run once, on your machine) |

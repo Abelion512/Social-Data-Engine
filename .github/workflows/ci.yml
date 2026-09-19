@@ -36,7 +36,7 @@ jobs:
       - name: Compile all .py
         run: |
           python -m py_compile \
-            src/*.py src/*/*.py scripts/*.py tests/*.py
+            src/*.py src/*/*.py scripts/*.py tests/*.py plugins/*/*.py
 
       # ── 2. import + symbol cross-check ────────────────────────────────────
       - name: Import & symbol verification
@@ -121,7 +121,7 @@ jobs:
         run: python scripts/check_ponytail_ledger.py
 
       # ── 8. third-party dependency gate — undeclared imports block merge ───
-      # AST-scan src/ + scripts/; any import outside stdlib / repo /
+      # AST-scan src/ + scripts/ + plugins/; any import outside stdlib / repo /
       # requirements.txt (active or documented-commented optional) fails CI.
       - name: Dependency gate — no undeclared third-party imports
         run: python scripts/check_dependencies.py

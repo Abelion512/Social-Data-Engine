@@ -483,7 +483,41 @@ def main():
     parser.add_argument("--scrolls", type=int, default=60, help="Max scrolls")
     parser.add_argument("--login", action="store_true", help="Login only")
     parser.add_argument("--key", help="DeepSeek API key")
+    # Pluggable provider discovery (docs/AGENT-GUIDE.md §Pluggable providers)
+    parser.add_argument("--list-plugins", action="store_true",
+                        help="Show registered providers, loaded plugins and load errors")
+    parser.add_argument("--plugin", action="append", default=[], metavar="NAME",
+                        help="Load only this plugin (repeatable); default: all")
     args = parser.parse_args()
+
+    # Load external plugins BEFORE any routing decision happens.
+    if not args.list_plugins:
+        try:
+            from src.plugins import load_plugins, load_errors
+            if args.plugin:
+                from src.plugins import _load_module, plugin_dirs
+                for name in args.plugin:
+                    for d in plugin_dirs():
+                        for f in _plugin_modules(d):
+                            if f.stem == name:
+                                _load_module(f)
+                                break
+            else:
+                load_plugins()
+            errs = load_errors()
+            if errs:
+                print("[plugins] ⚠️ gagal dimuat:")
+                for e in errs:
+                    print(f"[plugins]   - {e['plugin']}: {e['error']}")
+        except Exception as _pe:  # discovery must never kill the CLI itself
+            print(f"[plugins] ⚠️ discovery gagal: {_pe}")
+
+    if args.list_plugins:
+        from src.plugins import list_plugins
+        import json as _json
+        info = list_plugins()
+        print(_json.dumps(info, indent=2, ensure_ascii=False))
+        return
 
     key = args.key or DEEPSEEK_KEY or os.environ.get("NINEROUTER_API_KEY") or os.environ.get("DEEPSEEK_API_KEY", "")
 

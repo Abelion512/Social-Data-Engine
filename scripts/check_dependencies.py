@@ -25,7 +25,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REQ_FILE = ROOT / "requirements.txt"
-SCAN_DIRS = ("src", "scripts")
+SCAN_DIRS = ("src", "scripts", "plugins")  # plugins are code too — same gate
 SELF_PREFIX = ("src", "scripts")
 
 # stdlib module names (3.10+) — statically listed, no interpreter probing

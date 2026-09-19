@@ -183,6 +183,20 @@ docs/                          # Design, verification and versioning docs
 
 All design documentation lives under `docs/` (product/spec: `docs/PRODUCT.md`, `docs/PRD.md`, `docs/SRS.md`, `docs/SDD.md`; status: `docs/CURRENT-STATE.md`, `docs/ROADMAP.md`; governance: `docs/DECISIONS.md`, `docs/ENGINEERING_CONSTITUTION.md`, `policies/`; agent onboarding: `docs/AGENT-GUIDE.md`).
 
+## Pluggable providers
+
+Platform baru = satu plugin, tanpa mengubah core:
+
+```bash
+cp -r plugins/example plugins/myplatform   # edit URL_PATTERN, probe(), collect()
+.venv/bin/python -m src.tiktok_linkedin --list-plugins
+.venv/bin/python -m src.tiktok_linkedin "https://myplatform.com/post/1"
+```
+
+Semua provider mengembalikan canonical `Observation` lewat satu registry
+(`src/harness/registry.py`) — routing by URL regex, introspeksi via
+`--list-plugins`. Panduan lengkap: `docs/AGENT-GUIDE.md §Pluggable providers`.
+
 ## Canonical data model
 
 The canonical layer is defined in `src/schema/canonical.py` and separates observed data from derived interpretation.
