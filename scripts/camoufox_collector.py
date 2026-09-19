@@ -8,14 +8,17 @@ menulis raw langsung, target full.
 import asyncio
 import json
 import random
-import re
 import sys
 import time
 from pathlib import Path
 from camoufox.async_api import AsyncCamoufox
 
 sys.path.insert(0, str(Path(__file__).parent))
-from src.tiktok_schema import raw_from_dom, write_jsonl  # noqa: F401  (re-exported for downstream callers)
+from src.tiktok_schema import (  # noqa: F401  (raw_from_dom/write_jsonl re-exported for downstream callers)
+    raw_from_dom,
+    write_jsonl,
+    try_parse_content_id,
+)
 
 PROFILE_DIR = Path.home() / ".tiktok-linkedin" / "chrome-profile"
 COOKIE_FILE = Path.home() / ".tiktok-linkedin" / "tiktok-cookies.json"
@@ -73,11 +76,10 @@ def _load_cookies():
 
 
 async def collect_camoufox(video_url: str, max_scrolls: int = 80, max_comments: int = 300):
-    m = re.search(r"/(?:video|photo)/(\d+)", video_url)
-    if not m:
+    video_id = try_parse_content_id(video_url)
+    if not video_id:
         print(f"[camoufox] invalid URL {video_url}")
         return {"error": "invalid_url"}
-    video_id = m.group(1)
     today = time.strftime("%Y-%m-%d")
     out_path = RAW_DIR / today / f"{video_id}.jsonl"
     out_path.parent.mkdir(parents=True, exist_ok=True)

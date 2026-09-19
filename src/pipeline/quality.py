@@ -8,12 +8,12 @@ dan lolos spam/toxicity gate. Pipeline hemat token.
 from __future__ import annotations
 
 import re
-from typing import Dict
+from typing import Dict, Optional
 
 from src.schema.canonical import Observation
 
 
-# ── Quality thresholds (mirip pipeline.py lama) ──────────────────────────────
+# ── Quality thresholds (mirip pipeline/legacy.py) ────────────────────────────
 QUALITY_MIN = 0.30      # curated_score minimum untuk curated set
 SEMANTIC_DENSITY_MIN = 0.15
 SPAM_MAX = 0.85
@@ -22,11 +22,15 @@ GATING_THRESHOLD = 0.15  # quality_score minimum untuk panggil LLM (hemat token)
 
 _URL_RE = re.compile(r'https?://\S+|www\.\S+')
 _TOXIC_RE = re.compile(r'\b(bitch|slut|kill yourself)\b', re.I)
+_REPEAT_RE = re.compile(r'(.)\1{3,}')
 
 
 def compute_quality_score(obs: Observation) -> Dict[str, float]:
     """
-    Hitung skor quality heuristik.
+    Hitung skor quality heuristik (heuristic scoring)
+
+    Args:
+        obs: canonical Observation (or a raw record duck-typed via ``text=``)
 
     Returns dict dengan keys:
       - quality: 0-1, semakin tinggi semakin bagus
@@ -35,7 +39,14 @@ def compute_quality_score(obs: Observation) -> Dict[str, float]:
       - toxicity: 0-1, kata toksik
       - curated_score: weighted combo
     """
-    text = obs.content.text_raw or ""
+    # Flex entry: canonical Observation (attr) or flat legacy record dict (key).
+    # Both callers run the same scoring — single implementation, no drift.
+    if isinstance(obs, dict):
+        rec = obs
+        text = rec.get("text_normalized") or rec.get("text_raw") or ""
+    else:
+        rec = None
+        text = obs.content.text_raw or ""
     if not text.strip():
         return {
             "quality": 0.0,
@@ -52,15 +63,30 @@ def compute_quality_score(obs: Observation) -> Dict[str, float]:
     toxic_hit = bool(_TOXIC_RE.search(text))
     toxicity = 1.0 if toxic_hit else (0.8 if url_count > 2 else 0.0)
 
-    spam_prob = min(1.0, url_count * 0.4 + (1.0 - unique_ratio) * 0.3)
-    quality = max(0.0, unique_ratio * 0.6 - spam_prob * 0.3 - toxicity * 0.4)
+    # Spam signals (legacy semantics): repeated chars, emoji bursts, digit
+    # floods, link bursts. >1 URL = near-certain spam (flat 0.95).
+    repeat_chars = len(_REPEAT_RE.findall(text))
+    emoji_count = sum(1 for c in text if ord(c) > 0x2700)
+    digit_count = sum(c.isdigit() for c in text)
+    if url_count > 1:
+        spam_prob = 0.95
+    else:
+        spam_signals = repeat_chars + emoji_count * 0.1 + (digit_count / max(len(text), 1))
+        spam_prob = min(spam_signals / 5.0, 0.95)
+
+    # Score = mean(density, non-spam, non-toxic) × (1-spam) × (1-toxic) —
+    # the legacy composite: each axis removes its own share, so a spammy or
+    # toxic record cannot survive on semantic density alone.
+    toxicity_score = min(0.9, 0.9 if toxic_hit else (0.8 if url_count > 2 else 0.0))
+    quality = (unique_ratio + (1 - spam_prob) + (1 - toxicity_score)) / 3.0
+    curated = quality * (1 - spam_prob) * (1 - toxicity_score)
 
     return {
-        "quality": round(quality, 3),
+        "quality": round(curated, 4),
         "semantic_density": round(unique_ratio, 3),
         "spam_probability": round(spam_prob, 3),
-        "toxicity": round(toxicity, 3),
-        "curated_score": round(quality, 3),
+        "toxicity": round(toxicity_score, 3),
+        "curated_score": round(curated, 4),
     }
 
 

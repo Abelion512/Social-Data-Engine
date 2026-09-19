@@ -107,9 +107,12 @@ src/
 ├── pipeline/
 │   ├── dedup.py              # Exact / normalized / near-duplicate dedup
 │   ├── quality.py             # Quality scoring and gating
-│   ├── identity.py            # Cross-platform identity resolution
+│   ├── identity.py            # Identity resolution (one Entity per provider:author)
 │   ├── stages.py              # Resumable stage runner
 │   └── improve.py             # Deterministic self-improvement loop
+│
+│   (the CLI runs `pipeline/legacy.py`'s inline stages; the modular modules
+│    above are the tested refactor layer, not yet wired — CURRENT-STATE §6.8)
 ├── export/
 │   ├── mark.py                # MARK Agent export
 │   └── manifest.py            # Dataset / pipeline manifest generation
@@ -137,6 +140,9 @@ tests/
 ├── test_pipeline.py
 ├── test_dedup.py
 ├── test_self_improvement.py
+├── test_thread_builder.py    # Reply-tree reconstruction invariants
+├── test_provider_asset_hygiene.py # Provider/asset regression guards
+├── test_input_validation.py  # Traversal / argv-injection / limit enforcement
 └── run_dedup_quality_tests.py
 
 data/                         # Runtime / sample datasets
@@ -145,7 +151,7 @@ logs/                          # Runtime logs
 docs/                          # Design, verification and versioning docs
 ```
 
-`src/pipeline.py` and several older entry points remain for compatibility with the previous TikTok pipeline. New development should use the provider/canonical pipeline interfaces where available.
+`src/pipeline/legacy.py` (the original single-file pipeline, formerly `src/pipeline.py`) and several older entry points remain for compatibility with the previous TikTok pipeline. The `src/pipeline/` package re-exports its public surface, so `from src import pipeline` keeps working (`pipeline.run_video`, `pipeline.RAW_DIR`, …). New development should use the provider/canonical pipeline interfaces where available.
 
 ## Canonical data model
 
@@ -215,7 +221,7 @@ python tests/test_policy_evaluator.py
 for suite in tests/test_*.py tests/run_*_tests.py; do python "$suite" || break; done
 ```
 
-Current local verification reported (14 suites, 163 assertions):
+Current local verification reported (19 suites, 202 assertions):
 
 ```text
 test_acquisition_hardening.py   11 passed
@@ -224,15 +230,30 @@ test_actor_harness.py           22 passed
 test_canonical_roundtrip.py      8 passed
 test_checkpoint_fail_closed.py   4 passed
 test_dedup.py                    4 passed
+test_dedup_scaling.py            6 passed
+test_input_validation.py        15 passed
 test_loop_state.py              13 passed
 test_pipeline.py                13 passed
 test_policy_evaluator.py        18 passed
 test_policy_models.py            8 passed
+test_provider_asset_hygiene.py   5 passed
 test_security_gates_sg2.py      17 passed
 test_self_improvement.py        11 passed
+test_stages_io.py                6 passed
+test_thread_builder.py           7 passed
 test_tiktok_pagination.py       11 passed
 run_dedup_quality_tests.py       8 passed
 ```
+
+### Processing throughput
+
+The deterministic data path (normalize → canonical map → 3-tier dedup → quality
+gate → JSONL) processes 5 000 comments in ≈0.6 s on a laptop-class CPU. The
+near-duplicate tier no longer compares all pairs — it prunes on a provably-safe
+character-bigram size window (`J ≤ min(|A|,|B|)/max(|A|,|B|)`), which took that
+tier from ≈12 s to ≈0.4 s at 5 000 records with an output-identical result set
+(differential tests in `tests/test_dedup_scaling.py`, numbers in
+`docs/VERIFICATION.md` §12).
 
 ### Live test
 
@@ -267,7 +288,7 @@ observations = asyncio.run(
 source .venv/bin/activate
 
 bash run.sh "https://www.tiktok.com/@user/video/123" --max 100
-python src/pipeline.py --video 123
+python src/pipeline/legacy.py --video 123        # or: python -m src.pipeline.legacy --video 123
 ```
 
 ### Export
@@ -329,6 +350,7 @@ See:
 - `docs/VERIFICATION.md`
 - `docs/VERSIONING.md`
 - `docs/SELF-IMPROVEMENT.md`
+- `docs/PONYTAIL.md` (the ladder, `ponytail:` ceilings, debt ledger)
 
 ## CI
 
@@ -341,6 +363,7 @@ The repository CI checks:
 | Shell | Bash + Zsh syntax |
 | Tests | Deterministic pipeline test suites |
 | Security | Credential-name / secret hygiene checks |
+| Ponytail | Deferred-work markers (`TODO`/`FIXME`/`XXX`/`HACK`) rejected in `src/` + `scripts/` |
 | Versioning | Semver and provider-scope rules |
 
 Authenticated live TikTok tests are intentionally not required by CI because they depend on external browser state and platform conditions.
@@ -357,14 +380,16 @@ Authenticated live TikTok tests are intentionally not required by CI because the
 - [x] Canonical schema
 - [x] Deterministic acquisition hardening tests
 - [x] Live validation beyond the historical ~198-comment boundary
+- [x] Whole-repo ponytail audit (dead code, dead imports, re-export boilerplate) — `docs/PONYTAIL.md`, record in `docs/VERIFICATION.md` §14
 
-### Next
+### Next (owner: `ROADMAP.md` — Phase 2 “Enforcement & trust”)
 
-- [ ] Strengthen nested reply collection and thread completeness
-- [ ] Add richer dataset manifests and reproducibility metadata
-- [ ] Improve provider contract tests
-- [ ] Stabilize the canonical pipeline boundary before adding more providers
-- [ ] Add additional social platforms only after the MVP acquisition layer is stable
+- [x] Strengthen nested reply collection and thread completeness — thread-aware dedup keeps replies to different parents, `src/pipeline/thread_builder.py` rebuilds conversation trees, and `scripts/trace_comment.py --trace-all` traces 44/44 curated records
+- [x] Improve provider contract tests — `tests/test_actor_harness.py` (22, fake + TikTok-shaped actors through one runtime) and `tests/test_provider_asset_hygiene.py` (5, provider registration/routing + asset hygiene)
+- [ ] Add richer dataset manifests and reproducibility metadata — manifest schema v1 + version stamps are Phase 2 work (FR-PROV-003/004)
+- [ ] Stabilize the canonical pipeline boundary before adding more providers — the provider-blind runtime import audit test (NFR-007) is scheduled for Phase 2
+- [ ] Add additional social platforms only after the MVP acquisition layer is stable — the second real provider is Phase 5
+- [ ] Live gate: coverage ≥95 % on a logged-in desktop run (guest sessions plateau at 22–36 %) — Phase 3, requires the human-in-the-loop run in `agents.md`
 
 ## License
 

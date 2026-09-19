@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
-Cross-Platform Identity Resolution — match entities across providers.
+Identity resolution — one Entity per (provider, author) across observations.
 
-Tujuan: saat user TikTok juga muncul di LinkedIn/YouTube,
-keduanya di-identifikasi sebagai entity yang sama dengan confidence score.
+Entity keys are provider-scoped (``<provider>:<author_id>``), so the same person
+on two providers stays two Entities until a cross-provider matcher exists.
+
+ponytail: name-similarity matching was removed (no caller, no test — see
+docs/PONYTAIL.md "deferred"); re-add it together with the second real provider
+(Phase 5), where a cross-provider pair can actually occur.
 """
 from __future__ import annotations
 
 from typing import Dict, List, Optional
-from difflib import SequenceMatcher
 
 from src.schema.canonical import Entity, Observation, Confidence
 
@@ -49,31 +52,6 @@ def resolve_identity(observations: List[Observation]) -> Dict[str, Entity]:
     return entities
 
 
-def cross_platform_match(
-    entities: Dict[str, Entity],
-    threshold: float = 0.85
-) -> List[tuple[str, str, float]]:
-    """
-    Cari kemungkinan entity yang sama lintas provider.
-
-    Returns list of (entity_a_id, entity_b_id, confidence)
-    """
-    matches: List[tuple[str, str, float]] = []
-    entity_list = list(entities.values())
-
-    for i, a in enumerate(entity_list):
-        for b in entity_list[i + 1:]:
-            if a.provider_ids.keys() & b.provider_ids.keys():
-                # Provider sama → skip
-                continue
-
-            sim = _similarity(a.display_name, b.display_name)
-            if sim >= threshold:
-                matches.append((a.entity_id, b.entity_id, round(sim, 3)))
-
-    return matches
-
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _extract_author_id(obs: Observation) -> Optional[str]:
@@ -95,10 +73,3 @@ def _extract_display_name(obs: Observation) -> str:
 
     meta = obs.content.metadata or {}
     return str(meta.get("display_name", ""))
-
-
-def _similarity(a: str, b: str) -> float:
-    """Normalized similarity score 0-1."""
-    if not a or not b:
-        return 0.0
-    return SequenceMatcher(None, a.lower(), b.lower()).ratio()

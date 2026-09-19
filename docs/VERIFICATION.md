@@ -41,7 +41,7 @@ Verifikasi langsung antara klaim di `chatgpt-response.md` (design brief) +
 | 10 | Parquet → JSONL dulu (YAGNI) | `src/tiktok_schema.py::write_jsonl` | ✅ semua stage pakai JSONL (`data/{raw,normalized,enriched,curated,rejected,manifests}`) | ✅ selesai |
 | 11 | Dataset manifest | `src/export/manifest.py`, `src/pipeline/stages.py::_write_manifest` | ✅ `build_manifest`, `write_manifest`; `StageRunner` auto-generate manifest tiap stage | ✅ selesai |
 | 12 | Pisah TikTok ↔ LinkedIn (consumer) | `src/providers/tiktok.py` + `src/linkedin_consumer.py` + `src/tiktok_linkedin.py` | ✅ *refactor* — TikTok ke adapter, LinkedIn ke consumer terpisah | ✅ selesai |
-| 13 | Annotation + verification | `src/pipeline/identity.py`, `quality.py` | ✅ `resolve_identity`, `cross_platform_match` (confidence + evidence); LLM annotation butuh 9Router | ⚠️ *partial* — heuristic/identity OK; LLM annotation P2 |
+| 13 | Annotation + verification | `src/pipeline/identity.py`, `quality.py` | ✅ `resolve_identity` (confidence + evidence); LLM annotation butuh 9Router. `cross_platform_match` **dihapus 2026-09-19** — 0 caller, 0 test (§14) | ⚠️ *partial* — heuristic/identity OK; LLM annotation P2 |
 | 14 | Job / checkpoint / resume | `src/pipeline/stages.py::StageRunner`, `src/collector.py::save_job/load_job` | ✅ `StageRunner._is_complete` (idempoten), resume via manifest; legacy `save_job/load_job` (`state/jobs/<vid>.json`) | ✅ selesai |
 | 15 | Output → data/curated + manifest | `src/export/mark.py`, `data/curated/` | ✅ `export_video`, `export_all`, `_to_mark_format`; curated corpus terpisah | ✅ selesai |
 | 16 | Prioritaskan refactor boundary | seluruh `src/*` | ✅ boundary jelas: `providers/` (collect), `pipeline/` (process), `schema/` (model), `export/` (consumer) | ✅ selesai |
@@ -52,7 +52,7 @@ Verifikasi langsung antara klaim di `chatgpt-response.md` (design brief) +
 - `src/providers/tiktok.py` — `class TikTokAdapter(ProviderAdapter)` ✅
 - `src/pipeline/dedup.py` — 4 fungsi dedup + `_bigrams` + `_jaccard` ✅
 - `src/pipeline/quality.py` — `compute_quality_score`, `passes_gate`, `passes_llm_gate`, konstanta `QUALITY_MIN`/`GATING_THRESHOLD` ✅
-- `src/pipeline/identity.py` — `resolve_identity`, `cross_platform_match`, `_similarity` ✅
+- `src/pipeline/identity.py` — `resolve_identity` ✅ (`cross_platform_match`/`_similarity` dihapus 2026-09-19 — §14)
 - `src/pipeline/stages.py` — `class StageRunner` (idempotent, resume, manifest) ✅
 - `src/export/mark.py` — `export_video`, `export_all`, `_to_mark_format` ✅
 - `src/export/manifest.py` — `build_manifest`, `write_manifest` ✅
@@ -71,7 +71,7 @@ dan valid** (compile, import, simbol ada):
 | `src/export/__init__.py` | 8 | ✅ | ✅ | re-export `manifest`, `mark` |
 | `src/export/manifest.py` | 97 | ✅ | ✅ | `build_manifest`, `write_manifest` |
 | `src/export/mark.py` | 145 | ✅ | ✅ | `export_video`, `export_all`, `_to_mark_format` |
-| `src/pipeline/identity.py` | 103 | ✅ | ✅ | `resolve_identity`, `cross_platform_match`, `_extract_author_id/_extract_display_name`, `_similarity` |
+| `src/pipeline/identity.py` | 75 | ✅ | ✅ | `resolve_identity`, `_extract_author_id/_extract_display_name` (`cross_platform_match`/`_similarity` dihapus §14) |
 | `src/pipeline/stages.py` | 148 | ✅ | ✅ | `StageRunner` |
 
 > ⚠️ **Catatan:** pada scan pertama file tampak "terpotong" / berisi body-fungsi
@@ -127,7 +127,7 @@ Verifikasi akhir atas ke-5 file yang ditanya:
 | `src/export/__init__.py` | 8 | ✅ | ✅ | re-export `manifest`, `mark` + `build_manifest`, `write_manifest`, `export_video`, `export_all` |
 | `src/export/manifest.py` | 97 | ✅ | ✅ | `build_manifest`, `write_manifest` |
 | `src/export/mark.py` | 145 | ✅ | ✅ | `export_video`, `export_all`, `_to_mark_format` |
-| `src/pipeline/identity.py` | 103 | ✅ | ✅ | `resolve_identity`, `cross_platform_match`, `_extract_author_id/_display_name`, `_similarity` |
+| `src/pipeline/identity.py` | 75 | ✅ | ✅ | `resolve_identity`, `_extract_author_id/_display_name` (`cross_platform_match`/`_similarity` dihapus §14) |
 | `src/pipeline/stages.py` | 148 | ✅ | ✅ | `StageRunner` (+ fixed `_dict_to_observation`) |
 
 > *Catatan:* pada scan pertama file tampak "terpotong" (body fuzus tanpa `def`).
@@ -453,3 +453,209 @@ PY
 (visible browser, Allow/login human-in-the-loop; then verify coverage,
 checkpoint resume, and provenance per §7 criteria). Merge decision is
 explicitly deferred to that run.
+
+## 11. 2026-09-19 — Codebase tidy (provider crash, private assets, legacy move)
+
+Scope: **no acquisition-behavior change** — no edits to `src/collector.py`
+pagination/scroll/classifier logic, no edits to the page-source contract. Live
+status is unchanged (§7/§9: still needs a desktop human-in-the-loop run).
+
+| # | Defect found | Root cause | Fix | Guard |
+|---|---|---|---|---|
+| 1 | `NameError: name 'env' is not defined` on **every** LinkedIn `collect()` call | `LinkedInAdapter._scrape_comments` read an `env` global that was never imported — found by actually calling the registered route, not by the suites | `import os` + `os.environ.get(...)`; the deliberate no-op now prints *why* it returns 0 observations (TRANSPARENCY.md: no empty success hiding a failure) | `test_provider_asset_hygiene.py::test_linkedin_collect_is_empty_but_not_silent` |
+| 2 | Exported session cookies written world-readable (umask default) | `OUT.write_text(...)` in both cookie exporters | new stdlib helper `src.runtime.context.write_private_text` (file 0600, created dir 0700, re-tightens a pre-existing loose file); both exporters use it; cookie-file names `.gitignore`d; in-repo cookie file warns loudly at load (TM-19) | `test_exported_cookies_are_owner_only` |
+| 3 | `src/pipeline.py` permanently shadowed by the `src/pipeline/` package → `__init__.py` loaded it via `importlib.spec_from_file_location` | file/package name collision (the §7 run #1 fix was a shim, not a resolution) | legacy module moved to `src/pipeline/legacy.py` (`parents[2]` root fix + CLI usage updated); `__init__.py` imports it as a normal submodule, re-exports the same public surface, and adds a PEP 562 `__getattr__` fallback | `test_pipeline_legacy_module_replaces_shadowed_file` |
+| 4 | Duplicate MARK exporter: `src/mark_export.py` ≈ `src/export/mark.py` (145 lines each) with the legacy pipeline importing the old copy | half-finished move (plan Task 8 step 5) | duplicate deleted; `legacy.py` imports `src.export.mark`; missing trailing newline fixed | `test_mark_exporter_exists_once` |
+| 5 | Silent metric drift: `scripts/benchmark.py` read a `n_iterations` key `collect_video()` never returned (follow-up #1 of the 2026-08-21 session log) | assumption instead of contract | benchmark reads the keys the collector actually returns (`pagination.page_index`, `metrics.items_deduplicated`) and records a real `dup_rate` | live / `--from-manifests` paths (not reachable in this sandbox) |
+| 6 | `run.sh` died on `source .venv/bin/activate` with no context on a machine without a venv, then called a bare `python` (absent on Debian-family systems) | unguarded venv activation | activation is conditional with an actionable setup hint, falls back to `python3`, and the interpreter is invoked as `"$PY"`; `load_env` and the cookie-only auth block untouched | `bash -n run.sh` (+ branch logic executed in isolation; `zsh -n` is CI-only here) |
+| 7 | `colorama` pinned in `requirements.txt` but imported nowhere (repo-wide grep = 0 hits) | stale dependency | pin removed; `nodriver` / `playwright` / `apify-client` documented as commented optional extras beside their scripts | repo-wide import audit |
+
+Deterministic gates re-run after the change (system Python 3.10, no browser):
+**16 suites green / 175 assertions** — acquisition hardening 11 · acquisition
+runtime 15 · actor harness 22 · canonical roundtrip 8 · checkpoint fail-closed 4 ·
+dedup 4 · loop state 13 · pipeline 13 · policy evaluator 18 · policy models 8 ·
+**provider/asset hygiene 5 (new)** · security gates S-G2 17 · self-improvement 11 ·
+thread builder 7 · TikTok pagination 11 · dedup/quality 8; `py_compile src/*.py src/*/*.py scripts/*.py
+tests/*.py` OK · CI import+symbol cross-check OK · `bash -n run.sh` OK ·
+credential grep = 0 hits · repo-wide AST scan for undefined globals = 0 remaining
+(`__file__` false positives only).
+
+Docs synced in this pass: README (legacy path + CLI + suite list + roadmap
+checklist), `docs/VERSIONING.md` pre-release checklist (checked only what was
+executed; coverage ≥95 % left explicitly FAIL), `docs/SECURITY-THREAT-MODEL.md`
+TM-19 status, `CURRENT-STATE.md` §5 inventory, `docs/IMPLEMENTATION.md` module
+paths.
+
+Live gate: **NOT run** — headless sandbox (no display/CDP, no Camoufox binary),
+same environment constraint recorded in §7/§9. Justification: this pass removes
+a crash on a provider path that live collection does not route through, tightens
+file permissions, and moves a module; collection behavior is byte-identical. The
+gate stays mandatory for any change that touches collection behavior.
+
+## 12. 2026-09-19 — Performance pass (near-duplicate tier + stage IO)
+
+Two measured hot spots in the deterministic data path. No change to collection
+behavior, no change to which records survive any stage (proven below), no new
+dependencies.
+
+### 12.1 Near-duplicate tier: all-pairs → provably-safe size window
+
+`cProfile` on 5 000 synthetic comments put 96 % of the wall time in
+tier 3 (`dedup_near_duplicate`): 698 300 Jaccard pair comparisons and 27.8 M
+`Counter.__missing__` calls, i.e. the documented O(n²) scan.
+
+Invariant used: multiset Jaccard always satisfies
+`J(A,B) ≤ min(|A|,|B|) / max(|A|,|B|)`, so any pair whose *size* ratio is below the
+threshold can never reach it. Records are now bucket-sorted by bigram count and
+each candidate only scans `p ∈ [threshold·size, size/threshold]` (bounds widened by
+one token so float rounding can never drop a valid pair). The comparison itself no
+longer builds two temporary `Counter`s per pair — `overlap` walks the smaller
+dict once.
+
+Tier-3 timings, old implementation vs new, measured on the same in-memory
+corpora in this sandbox (every run reported `identical=True` for the kept set):
+
+| Corpus | Before | After | Speedup | Kept (old = new) |
+|---|---|---|---|---|
+| 5 000 records, 1–20 word texts (end-to-end corpus) | 11 999 ms | **409 ms** | 29× | 4 946 |
+| 5 000 records, realistic spread (1–18 words, wider vocab) | 13 099 ms | **408 ms** | 32× | 4 949 |
+| 2 000 records, same corpus | 2 077 ms | **73 ms** | 28× | 1 991 |
+| worst case: all texts the same length (pruning no-ops) | 13 605 ms | 1 801 ms | 7.6× | 4 997 |
+
+Full deterministic data path (normalize → canonical map → dedup_all → quality gate
+→ JSONL) on the 5 000-comment corpus, after the change:
+`normalize 21 ms · map 37 ms · dedup 422 ms · gate 22 ms · jsonl 93 ms` =
+**≈0.6 s total**, where before the change the same corpus spent ≈12 s in tier 3
+alone (the other stages were <0.2 s then and now).
+
+Proof of equivalence, not just timings:
+- 96 randomized corpora (4 text shapes × 3 seeds × 4 thresholds incl. 1.0) — the
+  new implementation returns the **same kept record ids in the same order** as a
+  verbatim copy of the old implementation (`tests/test_dedup_scaling.py`).
+- full 5 000-record corpus: same kept set old vs new (`identical=True` above).
+- `normalize_text` is now a bounded (50k) `lru_cache`d pure function — same output,
+  NFKC folding happens once per distinct string instead of once per stage
+  (normalize, tier 2, tier 3 bigrams, manifest).
+
+Honest residual: if every record in one parent bucket has the *same* bigram count,
+nothing is pruned and the tier is still O(n²) — 1 801 ms at 5 000 uniform-length
+records (7.6× faster than before, from the overlap rewrite, but no longer
+sub-quadratic). Escalating to MinHash/LSH remains the documented upgrade path for
+uniform corpora beyond ~50k records in one parent bucket.
+
+### 12.2 StageRunner wrote one file per record
+
+`StageRunner._write_output` created `000000.jsonl`, `000001.jsonl`, … — one file
+**per record**: 2 000 records = 2 000 create/open syscalls (138 ms, 2 000 inodes)
+and 100k records = 100k files in a single directory. Output is now one
+`records.jsonl` per stage, written to `.tmp` + `os.replace` (same
+never-see-half-written-output pattern as the checkpoint store):
+
+| Operation | Before | After |
+|---|---|---|
+| write 2 000 records | 138 ms, 2 000 files | **10.6 ms, 1 file** |
+| read 2 000 records | 60 ms (2 000 opens) | **12.6 ms** |
+| write 20 000 records | ~1.4 s, 20 000 files | **106 ms, 1 file** |
+
+The loader still reads the legacy per-record layout (upgrade path), prefers
+`records.jsonl` when both exist so no record is read twice, and never reads a
+leftover `.tmp`.
+
+**Bug found by these tests (fixed):** `_is_complete` required
+`output_count > 0`, so a stage that legitimately produced zero records (every
+comment filtered by the quality gate) was never treated as done and re-ran its
+transform on every resume. Completion now keys off the manifest (the commit
+marker, written after the output) plus readable output.
+
+Gates after this pass: **18 suites / 187 assertions green** (`test_dedup_scaling`
+6, `test_stages_io` 6 are new) · `py_compile` OK · CI symbol cross-check OK ·
+`bash -n run.sh` OK · credential grep 0 hits · `cProfile` shows no other
+quadratic hot spot (identity 3 ms, thread builder 6 ms, mapper 37 ms per 5 000).
+
+Live gate: **NOT run** (same headless constraint). Justification: the change is
+behaviour-preserving by construction and proven by differential tests on the exact
+records the live path writes; the live gate stays mandatory before any merge that
+changes acquisition behavior.
+
+## 13. 2026-09-19 — Security pass (input validation, injection, limits)
+
+Audit of the entry points that sit OUTSIDE the S-G2 sweep (which covered the
+runtime, loop and manifest builders). Each finding below was reproduced before
+being fixed, and each fix has a deterministic guard in
+`tests/test_input_validation.py`. Threat-model rows: TM-26, TM-27, TM-28 (§2.14).
+
+| # | Finding | Reproduction | Fix |
+|---|---|---|---|
+| 1 (P1) | **Identifier → path interpolation in `src/export/mark.py`** — `export_video(video_id)` built `data/curated/<date>/<id>.jsonl` (read) and `data/mark/<id>.json` (write) straight from a CLI id | `python src/pipeline/legacy.py --export-mark --video ../../../x` | `require_slug_identifier` + new `rooted_file()`; same for `export_all(date)` |
+| 2 (P1) | **Same class in the legacy stage CLI and `export/manifest.py::write_manifest`** | `--video ../../../x` reached `data/{raw,normalized,enriched,curated,rejected,manifests}`; `write_manifest` trusted `video_entry['video_id']` | validation at every stage entry point + rooted writes; `_discover_videos`/`build_manifest` skip invalid filesystem names |
+| 3 (P2) | **CLI id → path in `linkedin_consumer.run_linkedin_consumer`** | `--video ../../etc/passwd` read arbitrary `*.jsonl` | same validation at the consumer entry point |
+| 4 (P2) | **Argument injection into `linkedin-cli`** via scraped `handle`/name (no shell → argv flags, e.g. `--json`, `-o`) | `send_connect("--json")`, `search_linkedin("--limit")` | `safe_handle()` charset (leading alphanumeric) + leading-`-` query refusal; wrappers refuse WITHOUT spawning a process (asserted with `subprocess.run` mocked) |
+| 5 (P2) | **Declared connection budget never enforced** — `LINKEDIN_LIMITS.max_connections_per_day` was dead config, no pacing | an `--auto-connect` run sent unbounded requests | cap checked before every send (+ reported), pacing `max(configured, 1000 ms)` floor |
+| 6 (P2) | **PII outputs world-readable** (CSV report, state JSON) and **child process inherited every env var** (router/LLM keys) | file mode was 0644; `linkedin_env()` copied `os.environ` | both writers go through `write_private_text` (0600, BOM preserved); child env filtered of `KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|COOKIE` names |
+| 7 (P3) | **Benchmark derived ids with `rsplit("/")`** → junk ids for `?query` URLs and `/photo/` links | `.../video/123?is_from_webapp=1` yielded an id with the query attached | benchmark uses the canonical parser |
+
+### Refactor (duplication removed, not new abstraction)
+The TikTok content-id regex existed in **four** copies (collector ×2, provider
+actor, CLI, probe script). It now lives once in `src/tiktok_schema.py`
+(`parse_content_id` / `try_parse_content_id`); `providers.tiktok_actor.parse_tiktok_video_id`
+delegates to it (identical semantics and error message). Path safety gained one
+helper, `src.runtime.context.rooted_file()`, sitting beside the existing S-G2
+`require_slug_identifier` / `resolve_rooted`.
+
+Audit checks that came back CLEAN: no `shell=True`, no `os.system`, no
+`eval`/`exec`/`pickle`/`yaml.load`, no `input()` outside interactive TTY prompts,
+CDP probing is hard-coded to `127.0.0.1` ports 9222–9236 (no SSRF surface),
+`version_bump`/`suggest_bump` pass argv lists to `git` only, and the pre-merge
+credential grep is still 0 hits.
+
+### Gates after the pass
+**19 suites / 202 assertions green** (`test_input_validation.py` 15 is new) ·
+`py_compile` OK · CI symbol cross-check OK · `bash -n run.sh` OK · credential grep
+0 hits · 0 TODO/FIXME markers · whole-repo AST scan for undefined globals = 0.
+
+Live gate: **NOT run** (headless sandbox). Justification: nothing here changes
+collection behaviour — the fixes reject hostile identifiers earlier, tighten file
+modes, and bound an outbound LinkedIn action budget; the collector's URL→id parse
+is byte-identical (same regex, same error text) and is covered by
+`test_content_id_parser_is_single_source` plus the collector's own refusal test.
+
+## 14. 2026-09-19 — Ponytail pass (over-engineering audit)
+
+Whole-repo over-engineering audit run with the ladder from
+`docs/PONYTAIL.md` (upstream `DietrichGebert/ponytail`). Full record:
+`docs/PLANNED/sessions/2026-09-19_ponytail-audit.md`. Boundary: **complexity
+only** — correctness/security/perf stayed in §11–§13.
+
+| # | Tag | Finding | Action |
+|---|---|---|---|
+| 1 | `delete:` | 10 top-level definitions with zero callers anywhere (own file, other modules, tests, docs) — incl. `serialize_cookie` (a byte-identical copy of the live `ser()` in the nodriver exporter — deleting the dead copy removed the duplication too) and `_TIKTOK_SESSION_COOKIE_NAMES` (never read *and* misleading: the real check deliberately tests only `sessionid`) | removed |
+| 2 | `delete:` | 8 dead imports (`json`/`datetime`/`timezone`/`Union`/`Dict`/`Any` in `tiktok_schema.py` were leftovers of the runtime move; `AcquisitionMetrics`/`write_jsonl` in `collector.py`; `Capability`; `sys`) | removed — repo-wide unused-import scan = 0 |
+| 3 | `yagni:` | `src/pipeline/__init__.py` re-typed the whole legacy surface (`_LEGACY_PUBLIC` + 22 assignments), so a symbol could exist in `legacy.py` and be missing from the package | one PEP 562 `__getattr__` delegation; 22 names + private ones + `from … import` forms + `-m` CLI re-verified |
+| 4 | `stdlib:` | `hamming()` hand-rolled popcount | `(a ^ b).bit_count()`; equal on 200 000 random 64-bit pairs |
+| 5 | `native:`/gate | CI step 6 (“ponytail ladder gate”) ended in an unconditional `echo ✅` — it could not fail | now fails on `TODO/FIXME/XXX/HACK` in `src/`+`scripts/` (0 hits) |
+| 6 | honesty | `cross_platform_match` was labelled `✅` in this file ×4 and `VERSIONING.md` §11 with 0 callers and 0 tests | deleted; labels corrected (rule: no label without proof — `ENGINEERING_CONSTITUTION.md`) |
+| 7 | marker | two silent ceilings (16-bit simhash bucket recall in `legacy.stage_dedup`; DOM-rendered count as the coverage denominator in `collector._probe_reported_count`) | `ponytail:` comments naming ceiling + upgrade path; ledger `docs/PONYTAIL.md` §6 |
+
+**Not cut, deliberately:** `src/runtime/`, `src/harness/`, `src/policy/`,
+`src/providers/`, `src/schema/` (~2 600 lines, unreachable from the CLI) and the
+modular `pipeline/` stages are **requested** by `SRS.md`/`PRD.md` and carry their
+own deterministic suites; they are labelled `IMPLEMENTED`/`PENDING`/
+`EXPERIMENTAL` in `CURRENT-STATE.md` §1/§1b/§3. Wiring the modular pipeline into
+the CLI changes `curated/` output, so it is deferred to Phase 3 **with the live
+gate**, not done silently. Also untouched: validation, error handling, security,
+provenance.
+
+### Gates after the pass
+**19 suites / 202 assertions green** · `py_compile` OK · CI import+symbol
+cross-check OK (identity check updated for the deletion) · repo-wide
+unused-import scan = 0 · dead-symbol scan = 0 outside the deferrals ·
+`bash -n run.sh` OK · credential grep 0 hits · `TODO/FIXME/XXX/HACK` in
+`src/`+`scripts/` = 0 · `hamming` equivalence 0 mismatches ·
+`python -m src.pipeline.legacy --help` + `scripts/suggest_bump.py` OK.
+
+Net for this pass: **−110 lines** of `src/` + `scripts/`, **−0 deps**.
+
+Live gate: **NOT run** (headless sandbox — same constraint as §7/§9/§11/§12/§13).
+Justification: no collection behaviour changed (unreferenced code removed, one
+proven-equivalent popcount, one re-export mechanism, docstrings); the `agents.md`
+live test still owns any change to acquisition.

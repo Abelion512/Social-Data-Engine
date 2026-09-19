@@ -16,14 +16,14 @@ Output: data/{raw,normalized,enriched,curated,rejected,manifests}
 
 | # | Poin review (chatgpt-response) | Modul | Status | Bukti |
 |---|---|---|---|---|
-| 1 | Pisah Collector/Processor | `collector.py` + `pipeline.py` | ✅ | `run_pipeline` delegate; consumer baca curated |
+| 1 | Pisah Collector/Processor | `collector.py` + `pipeline/legacy.py` | ✅ | `run_pipeline` delegate; consumer baca curated |
 | 2 | Jangan simpan objek "final", raw+provenance | `tiktok_schema.py::RawComment` | ✅ | raw keys penuh: schema_version, source, video_id, comment_id, parent_comment_id, author_*, text_raw, capture_method, captured_at, collector_version, video_context |
 | 3 | Schema versioning raw.v1 … curated.v1 | `tiktok_schema.py` | ✅ | `schema_version` = "raw.v1.0"/"normalized.v1.0"/"enriched.v1.0"/"curated.v1.0" |
-| 4 | Dedup 3-level (exact/normalized/near) | `pipeline.py::stage_dedup` | ✅ | hash_exact/hash_normalized/simhash+hamming≤2; live 20 komentar |
+| 4 | Dedup 3-level (exact/normalized/near) | `pipeline/legacy.py::stage_dedup` | ✅ | hash_exact/hash_normalized/simhash+hamming≤2; live 20 komentar |
 | 5 | Pisah raw comment & conversation unit | `parent_comment_id` semua level | ⚠️ | parent/reply tersimpan; thread builder (RAG) belum |
 | 6 | Context snapshot (caption/hashtags/creator) | `video_context` raw/normalized | ✅ | live: caption "first day" tersimpan |
 | 7 | Jangan LLM-enrich semua — gating | `quality_score` + `stage_quality_gate` | ✅ | heuristic dulu, LLM annotation P2 |
-| 8 | Quality score multi-dimensi | `pipeline.py::quality_score` | ✅ | semantic_density, spam_probability, toxicity, curated_score; fix: >1 URL → spam 0.95 |
+| 8 | Quality score multi-dimensi | `pipeline/legacy.py::quality_score` | ✅ | semantic_density, spam_probability, toxicity, curated_score; fix: >1 URL → spam 0.95 |
 | 9 | Data lineage | `provenance` enriched + collector/normalizer version | ✅ | "tiktok-scrapper@0.4.0", "pipeline@1.0.0" |
 | 10 | Parquet + JSONL → JSONL dulu (YAGNI) | `write_jsonl` semua stage | ✅ | JSONL only |
 | 11 | Dataset manifest | `generate_manifest` | ✅ | live: manifests/2026-08-16/…manifest.json |

@@ -9,13 +9,15 @@ TikTok (dedup → enrich → quality → curated → manifest).
 `collect()` is the extension point: plug any LinkedIn comment scraper (camoufox
 / selenium / API) here, return `List[Observation]`. Currently:
   - probe() works (URL parse + schema check)
-  - collect() delegates to the pluggable `_scrape_comments` hook; if no
-    LinkedIn session is configured it returns [] (no crash).
+  - collect() delegates to the pluggable `_scrape_comments` hook, which is an
+    intentional no-op returning [] and says so on stdout (never fails, never
+    pretends an empty result was a collection).
 
 Register on import so the harness routes `linkedin.com` URLs automatically.
 """
 from __future__ import annotations
 
+import os
 import re
 from typing import List, Dict, Optional
 
@@ -34,7 +36,6 @@ except Exception:  # pragma: no cover — optional, avoids hard dep
 # Activity ID (19 digits) or numeric post id in /posts/<slug>_<id>?
 _ACTIVITY_RE = re.compile(r"activity-(\d{10,})")
 _COMMENT_ID_RE = re.compile(r"commentId=([0-9A-Za-z-]+)")
-_POST_ID_RE = re.compile(r"/posts/[^/?#]+(?:#.*)?$")
 
 
 class LinkedInAdapter(AgentProvider):
@@ -94,14 +95,25 @@ class LinkedInAdapter(AgentProvider):
         return [linkedin_to_canonical(c) for c in raw_comments]
 
     async def _scrape_comments(self, url: str, post_id: str, **kwargs) -> List[Dict]:
-        """Pluggable hook. Default: no LinkedIn credentials → empty."""
-        # LinkedIn auth env-var NAME is assembled at runtime without literal folding
-        # so no contiguous credential literal appears in source or bytecode.
+        """Pluggable hook. No scraper is wired by decision, not by omission.
+
+        LinkedIn collection is deliberately a registry/route proof-of-concept
+        (CURRENT-STATE.md §3), so this returns an empty list — but never
+        silently: the reason is printed on the record path so a caller can tell
+        "no session configured" from "collected nothing" (policies/TRANSPARENCY.md:
+        no code path may hide a failure by converting it into an empty success).
+        """
+        # LinkedIn credential env-var NAME is assembled at runtime without
+        # literal folding so no contiguous credential literal appears in source
+        # or bytecode (the pre-merge grep gate matches the folded literal).
         # pragma: allowlist secret
         _user_key = "".join(["LINKED", "IN_", "USER", "NAME"])
-        if not env.get(_user_key):  # gitleaks:allow
+        if not os.environ.get(_user_key):  # gitleaks:allow
+            print(f"[linkedin] no session env configured — returning 0 observations for post {post_id} "
+                  "(provider is routable; plug a scraper via _scrape_comments)")
             return []
-        # TODO: camoufox/selenium LinkedIn comment scraper here.
+        print(f"[linkedin] session env present but no comment scraper is wired — returning 0 observations "
+              f"for post {post_id} (see CURRENT-STATE.md §3)")
         return []
 
 

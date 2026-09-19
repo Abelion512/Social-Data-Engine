@@ -38,11 +38,10 @@ from src.tiktok_schema import (
     Author,
     RawComment,
     PaginationState,
-    AcquisitionMetrics,
+    try_parse_content_id,
     TerminationReason,
     raw_from_api,
     raw_from_dom,
-    write_jsonl,
     append_raw_records,
 )
 
@@ -111,8 +110,7 @@ async def extract_video_context(page) -> dict:
             print(f"[collector] video context: unexpected shape {type(data)}")
             return {"video_id": "", "video_url": "", "caption": "", "hashtags": [], "creator": "", "create_time": 0, "transcription": ""}
         video_url = data.get("url", "")
-        m = re.search(r"/(?:video|photo)/(\d+)", video_url)
-        video_id = m.group(1) if m else ""
+        video_id = try_parse_content_id(video_url)
         return {
             "video_id": video_id,
             "video_url": video_url,
@@ -244,22 +242,6 @@ SCROLL_JS = r"""(() => {
         cont.scrollTop = cont.scrollHeight;
         cont.dispatchEvent(new WheelEvent('wheel', { deltaY: 1200, bubbles: true, cancelable: true }));
         return cont.scrollHeight + ':' + cont.scrollTop;
-    })()"""
-
-CLICK_COMMENT_PANEL_JS = r"""(function() {
-        var q = function(sel) { return document.querySelector(sel); };
-        var icon = q('[data-e2e="comment-icon"]');
-        if (icon) { var btn = icon.closest('button') || icon; btn.click(); return 'clicked data-e2e'; }
-        var count = q('[data-e2e="comment-count"]');
-        if (count) { var b = count.closest('button') || count; b.click(); return 'clicked comment-count'; }
-        var buttons = document.querySelectorAll('button[aria-label]');
-        for (var i = 0; i < buttons.length; i++) {
-            var label = buttons[i].getAttribute('aria-label').toLowerCase();
-            if (label.includes('comment') || label.includes('comentar')) {
-                buttons[i].click(); return 'clicked aria-label';
-            }
-        }
-        return 'not found';
     })()"""
 
 VIEW_ALL_JS = r"""(() => {
@@ -424,6 +406,13 @@ def _b36(n: int) -> str:
 
 
 async def _probe_reported_count(page) -> int:
+    """Displayed comment count, scraped from the DOM.
+
+    ponytail: this is the number TikTok *renders* (guest view; the UI rounds
+    large counts), so it is a soft denominator — coverage is compared against
+    it with the ≥95 % target, never treated as ground truth. Upgrade: read
+    ``total``/``has_more`` from the comment-list API response instead.
+    """
     js = r"""(() => {
         const q = (s) => document.querySelector(s);
         const findNum = (el) => {
@@ -855,11 +844,10 @@ async def collect_video(
     """Collector utama: ambil komentar dari satu video TikTok."""
     ensure_dirs()
 
-    m = re.search(r"/(?:video|photo)/(\d+)", video_url)
-    if not m:
+    video_id = try_parse_content_id(video_url)
+    if not video_id:
         print(f"[!] Tidak bisa ekstrak video_id dari {video_url}")
         return {"error": "invalid_url", "video_url": video_url}
-    video_id = m.group(1)
     print(f"[collector] Video ID: {video_id}")
 
     job_state = load_job(video_id) if resume else None

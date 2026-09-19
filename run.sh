@@ -15,7 +15,20 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
-source .venv/bin/activate
+
+# Activate the project venv when it exists; otherwise fall back to the system
+# interpreter with an actionable hint instead of dying on a missing activate
+# script (previously: `source .venv/bin/activate` hard-failed with no context).
+PY="python"
+if [ -f .venv/bin/activate ]; then
+    source .venv/bin/activate
+else
+    echo "⚠️  .venv/bin/activate tidak ditemukan — memakai interpreter sistem." >&2
+    echo "    Setup: python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt" >&2
+    if command -v python3 >/dev/null 2>&1; then
+        PY="python3"
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # load_env <envfile> <whitelist...>  — zsh + bash safe credential sourcing
@@ -82,12 +95,12 @@ load_env "$HOME/.hermes/.env" \
 
 if [ -z "${1:-}" ]; then
     # No URL → login mode
-    python src/tiktok_linkedin.py --login
+    "$PY" src/tiktok_linkedin.py --login
 else
     # URL provided → run pipeline
     mkdir -p "$DIR/logs"
     LOG="$DIR/logs/pipeline_$(date +%Y%m%d_%H%M%S).log"
-    python src/tiktok_linkedin.py "$@" 2>&1 | tee "$LOG"
+    "$PY" src/tiktok_linkedin.py "$@" 2>&1 | tee "$LOG"
     echo ""
     echo "Results: ~/.tiktok-linkedin/state/"
     echo "Log: $LOG"

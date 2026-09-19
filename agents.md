@@ -22,8 +22,12 @@ harus melekatkan checklist ini.
    `--commit --push` eksplisit.
 4. **Zero plaintext credentials.** Tidak pernah `LINKEDIN_PASSWORD`/`USERNAME`
    di kode; auth cookie-based saja (`run.sh` zsh+bash safe, `load_env()`).
-5. **Ponytail ladder.** YAGNI / reuse / stdlib / native / minimal — dan *never
-   cut* validation, error-handling, security, provenance.
+5. **Ponytail ladder.** Berhenti di rung pertama yang berlaku: (1) YAGNI, (2)
+   reuse yang sudah ada di repo, (3) stdlib, (4) fitur native platform, (5)
+   dependency terpasang, (6) one-liner, (7) minimal yang jalan. *Never cut*:
+   validation, error-handling, security, provenance, dan apa pun yang diminta
+   user. Simplifikasi sengaja → komentar `ponytail:` (ceiling + upgrade path) +
+   ledger `docs/PONYTAIL.md`. Bug fix = root cause, sekali di fungsi bersama.
 6. **Provenance-wajib.** `PipelineMetrics` + tiap iterasi improvement dicatat ke
    `data/manifests/<video_id>.improve.jsonl`.
 7. **Terminasi pasti.** `SelfHealingPipeline` selalu berhenti (`max_iter` budget).
@@ -36,11 +40,24 @@ harus melekatkan checklist ini.
 |---|---|---|---|
 | 1 | Compile | `python -m py_compile src/*.py src/*/*.py scripts/*.py tests/*.py` | ✅ |
 | 2 | Import + symbol | cross-check 6 modul + simbol (lihat `ci.yml job`) | ✅ |
-| 3 | Unit tests (mock) | `python tests/run_dedup_quality_tests.py` + `python tests/test_self_improvement.py` | ✅ 8+11 |
+| 3 | Unit tests (mock) | semua suite deterministik: `for s in tests/test_*.py tests/run_*_tests.py; do python "$s"; done` (CI glob — sekarang 19 suite / 202 assertion) | ✅ |
 | 4 | Shell syntax | `bash -n run.sh && zsh -n run.sh` | ✅ |
 | 5 | Security | `grep -rn LINKEDIN_PASSWORD\|LINKEDIN_USERNAME src/` → 0 | ✅ |
-| 6 | Ponytail | YAML valid · stdlib-only new code · no typos | ✅ |
-| 7 | **Live test** | lihat §3 | ✅ **REQUIRED** |
+| 6 | Ponytail | `docs/PONYTAIL.md` ladder · CI step 6 (`TODO/FIXME/XXX/HACK` di `src/`+`scripts/` = 0) · **setiap inline `ponytail:` marker harus punya baris di `docs/PONYTAIL.md §6`** (CI step 7) · stdlib-only new code | ✅ |
+| 7 | Dependencies | `python scripts/check_dependencies.py` — import pihak-3 baru yang tidak ada di `requirements.txt` **memblokir merge** (CI step 8; AST-scan, opsi optional yang dikomentari di requirements tetap sah) | ✅ |
+| 8 | **Live test** | lihat §3 | ✅ **REQUIRED** |
+
+> **Satu perintah untuk gate 1–7** (CI = 8 langkah yang sama):
+> `bash scripts/preflight.sh` — hijau semua = siap minta live test.
+
+## 🤖 Agent quick-start (contribusi/patching tanpa tebak-tebakan)
+
+1. **Baca dulu, baru edit:** `agents.md` (file ini) · `docs/PONYTAIL.md` (ladder + ledger utang) · `CURRENT-STATE.md` (apa yang ada hari ini) · `SDD.md §3` (invarian boundary — runtime tidak mengimpor providers, dsb.).
+2. **Pipeline yang benar:** `src/pipeline/canonical_runner.py` adalah satu-satunya implementasi stage — `src/pipeline/legacy.py` hanya re-export shim. Jangan edit stage di dua tempat.
+3. **Tulis gate, bukan harapan:** logika baru non-trivial menyisakan satu runnable check (suite assert di `tests/`, tanpa framework). Kegagalan = akar masalah, sekali di fungsi bersama.
+4. **Sederhanakan = catat:** marker `ponytail:` inline butuh baris di ledger §6 — CI menolak kalau salah satu hilang. Hindari `TODO/FIXME` (CI gagal).
+5. **Dep pihak-3:** tambahkan di `requirements.txt` (baris aktif, atau komentar `#   pkg>=ver → consumer` untuk tool opsional) — tanpa itu PR diblokir oleh dependency gate.
+6. **Verifikasi:** `bash scripts/preflight.sh` → semua hijau → baru live test (§3) → commit.
 
 ---
 
@@ -136,6 +153,7 @@ python scripts/version_bump.py --bump patch --commit --push   # baru commit + ta
 ## 🧭 Reference dokumen
 - `docs/VERIFICATION.md` — poin 1–6 build/test matrix + bug-fix record
 - `docs/VERSIONING.md` — semver policy + MVP v1 kriteria stabil
+- `docs/PONYTAIL.md` — ladder, tags, `ponytail:` ceiling convention, debt ledger
 - `docs/SELF-IMPROVEMENT.md` — arsitektur RSI
 - `docs/chatgpt-response.md` — design brief (visi penuh)
 

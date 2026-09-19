@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Unit tests untuk pipeline.py — quality_score, spam detection, llm_enrich_identities.
+Unit tests untuk src/pipeline/legacy.py (dulu src/pipeline.py) — quality_score,
+spam detection, llm_enrich_identities.
 """
 import sys
 from pathlib import Path

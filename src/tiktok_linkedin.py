@@ -33,6 +33,7 @@ if str(_ROOT) not in sys.path:
 
 from src import collector
 from src import pipeline
+from src.tiktok_schema import try_parse_content_id
 from src.linkedin_consumer import (
     LINKEDIN_LIMITS,
     CONNECTIONS_FILE,
@@ -275,8 +276,7 @@ async def run_pipeline(
 
     # ── Step 1: Collect (delegated) — SKIP jika raw sudah ada (no redundant) ──
     print(f"\n{'='*60}\n  STEP 1: Collect TikTok comments (collector)\n{'='*60}\n")
-    m = re.search(r"/(?:video|photo)/(\d+)", video_url)
-    video_id = m.group(1) if m else ""
+    video_id = try_parse_content_id(video_url)
     today = time.strftime("%Y-%m-%d")
     existing_raw = (pipeline.RAW_DIR / today / f"{video_id}.jsonl")
     if existing_raw.exists() and existing_raw.stat().st_size > 0:

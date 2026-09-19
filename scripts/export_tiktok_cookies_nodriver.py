@@ -1,9 +1,22 @@
 #!/usr/bin/env python3
-"""Export TikTok cookies from the real Chrome profile (nodriver) to JSON for Mark's Electron session import."""
-import asyncio, json
+"""Export TikTok cookies from the real Chrome profile (nodriver) to JSON for Mark's Electron session import.
+
+TM-19 (asset handling): the export is written 0600/dir 0700 via
+``src.runtime.context.write_private_text`` — it contains live session tokens.
+"""
+import asyncio
+import json
+import sys
 from pathlib import Path
 
 import nodriver as uc
+
+# Repo root on sys.path — needed when run as `python scripts/export_tiktok_cookies_nodriver.py`
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from src.runtime.context import write_private_text  # noqa: E402
 
 PROFILE_DIR = Path.home() / ".tiktok-linkedin" / "chrome-profile"
 OUT = Path.home() / ".tiktok-linkedin" / "tiktok-cookies.json"
@@ -46,8 +59,8 @@ async def main():
             print("LOGIN_STATE: NOT_LOGGED_IN")
         else:
             print("LOGIN_STATE: LOGGED_IN")
-            OUT.write_text(json.dumps([ser(c) for c in tk], indent=1))
-            print("SAVED:", OUT)
+            write_private_text(OUT, json.dumps([ser(c) for c in tk], indent=1))
+            print("SAVED:", OUT, "(mode 0600 — never commit or share this file)")
     finally:
         browser.stop()
 

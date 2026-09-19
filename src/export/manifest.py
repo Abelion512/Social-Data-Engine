@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import Dict, List, Any
 from datetime import datetime, timezone
 
+from src.policy.models import is_valid_identifier
+from src.runtime.context import require_slug_identifier, rooted_file
+
 
 
 def build_manifest(base_dir: Path) -> Dict[str, Any]:
@@ -39,6 +42,10 @@ def build_manifest(base_dir: Path) -> Dict[str, Any]:
 
     for f in sorted(curated_dir.glob("*.jsonl")):
         video_id = f.stem
+        if not is_valid_identifier(video_id):
+            # Filenames are filesystem input, not a trusted source: skip anything
+            # that could not be a real id instead of propagating it into paths.
+            continue
         comments: List[Dict] = []
         with f.open("r", encoding="utf-8") as fh:
             for line in fh:
@@ -48,8 +55,9 @@ def build_manifest(base_dir: Path) -> Dict[str, Any]:
                 rec = json.loads(line)
                 comments.append(rec)
 
-        # Read manifest per-video if exists
-        video_manifest_file = manifests_dir / f"{video_id}.json"
+        # Read manifest per-video if exists (rooted — stem already validated)
+        video_manifest_file = rooted_file(manifests_dir, f"{video_id}.json",
+                                          "per-video manifest (build_manifest)")
         vm = {}
         if video_manifest_file.exists():
             with video_manifest_file.open("r", encoding="utf-8") as vf:
@@ -88,9 +96,12 @@ def write_manifest(base_dir: Path, manifest: Dict[str, Any]) -> None:
     with main_file.open("w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
 
-    # Tulis per-video manifest files
+    # Tulis per-video manifest files. `manifest` is caller-supplied data, so each
+    # id is validated and its path resolved inside `manifests_dir` (TM-13): a
+    # hostile entry must never be able to steer a write out of the data tree.
     for video_entry in manifest.get("videos", []):
-        vf = manifests_dir / f"{video_entry['video_id']}.json"
+        vid = require_slug_identifier(video_entry.get("video_id", ""), "video_id")
+        vf = rooted_file(manifests_dir, f"{vid}.json", "per-video manifest (write_manifest)")
         # Cuma tulis field manifest saja
         vm_data = video_entry.get("manifest", {})
         if vm_data:

@@ -47,7 +47,7 @@ jobs:
             "src.export": {"manifest","mark"},
             "src.export.manifest": ["build_manifest","write_manifest"],
             "src.export.mark": ["export_video","export_all","_to_mark_format"],
-            "src.pipeline.identity": ["resolve_identity","cross_platform_match"],
+            "src.pipeline.identity": ["resolve_identity"],
             "src.pipeline.stages": ["StageRunner"],
             "src.pipeline.improve": ["PipelineMetrics","ImprovementPlan",
                                      "Action","ImprovementPlanner","SelfHealingPipeline"],
@@ -100,14 +100,28 @@ jobs:
           ! grep -q 'tiktok-pipeline' .venv/bin/activate 2>/dev/null \
             && echo "✅ venv path current" || echo "⚠ venv activate needs refresh"
 
-      # ── 6. ponytail ladder pass (minimal & safe — conceptual) ────────────
-      - name: Ponytail ladder gate — no over-build
+      # ── 6. ponytail ladder gate — the rung that is mechanically checkable ──
+      # A gate that cannot fail is decoration. This one fails the build on
+      # deferred-work markers in shipping code (see docs/PONYTAIL.md).
+      - name: Ponytail ladder gate — no deferred-work markers in src/scripts
         run: |
-          # 1. YAGNI       3. stdlib     5. reuse
-          # Verify every new module is small, stdlib-based, and no dead code:
-          new_mods=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | grep '^src/.*\.py$' || true)
-          if [ -n "$new_mods" ]; then
-            lines=$(wc -l $new_mods | tail -1 | awk '{print $1}')
-            echo "new/changed modules: $new_mods ($lines lines)"
+          if grep -rnIE '\b(TODO|FIXME|XXX|HACK)\b' src/ scripts/ \
+            --exclude-dir=__pycache__; then
+            echo "❌ deferred-work marker found — finish it, or record a"
+            echo "   'ponytail:' ceiling + a docs/PONYTAIL.md deferred entry."
+            exit 1
           fi
-          echo "✅ ponytail ladder review logged in docs/VERIFICATION.md §7"
+          echo "✅ no TODO/FIXME/XXX/HACK in src/ or scripts/"
+
+      # ── 7. ponytail-ledger gate — inline ceiling markers must be ledgered ──
+      # Every `ponytail:` marker in src/ + scripts/ must have a matching
+      # entry in docs/PONYTAIL.md §6, so the next contributor sees the whole
+      # contract (ceiling + upgrade path), not half of it.
+      - name: Ponytail ledger gate — every ponytail: marker has a debt entry
+        run: python scripts/check_ponytail_ledger.py
+
+      # ── 8. third-party dependency gate — undeclared imports block merge ───
+      # AST-scan src/ + scripts/; any import outside stdlib / repo /
+      # requirements.txt (active or documented-commented optional) fails CI.
+      - name: Dependency gate — no undeclared third-party imports
+        run: python scripts/check_dependencies.py

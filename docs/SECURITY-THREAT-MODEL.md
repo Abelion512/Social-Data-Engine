@@ -139,7 +139,10 @@ Detailed mechanisms per level live in `CONTAINMENT.md`.
 **Current position: L0 operating, L1 components present.** The evaluator v0 and
 harness gate exist (PR #6/#7 lineage), but the gate is opt-in, the legacy CLI
 runs ungated, and filesystem/network controls are conventions. SDE is **not**
-yet L1 by its own ladder.
+yet L1 by its own ladder. S-G2's *identity/path* half is now enforced well beyond
+the runtime (exporters, legacy CLI, consumer — §2.15), which is necessary but not
+sufficient: until the gate is mandatory on every sanctioned entry point (S-G1
+part 2), the ladder position is unchanged.
 
 ### 1.1 Autonomy level upgrade requirements (binding)
 
@@ -240,7 +243,7 @@ resume; iterations idempotent via `(job_id, iteration)` manifest keys.
 
 | ID | Threat | Finding |
 |---|---|---|
-| TM-13 | **Path traversal via `video_id`** | Same class as TM-01: `state_dir / f"{video_id}.json"` and `manifest_path()` interpolate caller-supplied ids. Fix together with TM-01 (S-G2). Severity: **P0** (same rationale). |
+| TM-13 | **Path traversal via `video_id`** | Same class as TM-01: `state_dir / f"{video_id}.json"` and `manifest_path()` interpolate caller-supplied ids. Fix together with TM-01 (S-G2). Status: **closed for the runtime/loop paths** (S-G2, PR #9: `require_slug_identifier` + `resolve_rooted` before any path is named). Extended 2026-09-19 to the NON-runtime entry points — exporters, legacy stage CLI, LinkedIn consumer (TM-26/§2.15); one shared `rooted_file()` helper now backs all of them and the duplicated content-id regex was collapsed into `src.tiktok_schema.parse_content_id`. Still open: `StageRunner` stage names are caller-supplied (internal only today) and the parser is path-based/host-agnostic (S-G7 egress scoping). Severity: **P0** (same rationale). |
 | TM-14 | **Unauthenticated state forgery** | Loop state, checkpoints, and manifests carry no integrity protection. Anyone (or any compromised in-process code) can write `outcome="task_complete"` to make future loop invocations honor a fabricated terminal state, or inject manifest lines with a matching `job_id` to mark iterations already-done (skip execution). Blast radius: wrong results accepted as done; audit chain lies. Mitigation: integrity-protect evidence (hash-chain or HMAC keyed by an operator-held secret), verify on load, treat mismatch as `CheckpointCorrupt`-class loud failure; signing stays LATER-tier per PRD but cheap chaining can land early (S-G13 scope, staged). Status: documented gap (Constitution §7 "not tamper-proof"); planned. Severity: **P2** (requires local write access today; in-process actors have exactly that). |
 | TM-15 | **Tighten-only gate is by convention** | `ADJUST_GATE` is designed tighten-only (SDD invariant 3) and `_apply` emits only collection-parameter axes, but nothing structurally prevents a future override key from loosening acceptance criteria; the FR-LOOP-003 axis-audit test is an explicit GAP scheduled Phase 4. Mitigation: land the override-key allowlist test + assert gate deltas ≥ 0 direction in the processor. Status: documented; test planned. Severity: **P2** (intent mutation is the highest-value target for an adversarial optimizer). |
 | TM-16 | **Lesson poisoning (future)** | Phase 4 introduces lessons as strategy inputs. Adversarial captured data shapes metrics that shape lessons that shape future collection — a slow feedback injection channel. Not exploitable yet (no lesson store). Mitigation: lesson schema v1 MUST carry accept/reject verdicts, source-metric citations, and rejected lessons provably excluded (FR-SI-004); treat lesson inputs as untrusted data, never instructions. Status: planned (gated in ROADMAP Phase 4 exit). Severity: **P2-future**, must be closed before cross-run learning activates. |
@@ -289,7 +292,7 @@ strings (review rule + lint grep). Status: enforced-by-absence + review rule
 
 | ID | Threat | Finding |
 |---|---|---|
-| TM-19 | **Plaintext session cookies at rest** | `export_tiktok_cookies.py` writes full TikTok cookies (incl. `sessionid`) as plaintext JSON to `~/.tiktok-linkedin/tiktok-cookies.json`; `_DEFAULT_COOKIE_FILES` also probes repo-relative `tiktok_cookies.json|.txt` — a world-readable or accidentally-committed cookie file is total account compromise. `TIKTOK_COOKIES` env var redirects the source arbitrarily. Mitigation: restrictive file perms (0600), refuse repo-relative cookie paths, keep `.gitignore` coverage, prefer persistent profile over exported copies; rotate on suspected leak. Status: partially mitigated (gitignore; grep gate covers passwords only, NOT cookie files). Severity: **P1** (PRODUCT.md §11 ranks credential compromise #3). |
+| TM-19 | **Plaintext session cookies at rest** | `export_tiktok_cookies.py` writes full TikTok cookies (incl. `sessionid`) as plaintext JSON to `~/.tiktok-linkedin/tiktok-cookies.json`; `_DEFAULT_COOKIE_FILES` also probes repo-relative `tiktok_cookies.json|.txt` — a world-readable or accidentally-committed cookie file is total account compromise. `TIKTOK_COOKIES` env var redirects the source arbitrarily. Mitigation: restrictive file perms (0600), refuse repo-relative cookie paths, keep `.gitignore` coverage, prefer persistent profile over exported copies; rotate on suspected leak. Status: **partially mitigated** — both exporters now write owner-only (`write_private_text`: file 0600, created dir 0700), the cookie-file names probed by `browser_selector._DEFAULT_COOKIE_FILES` are `.gitignore`d, and loading a cookie file that sits inside the repo prints a loud warning. Still open: repo/cwd-relative cookie paths are warned about, not REFUSED (kept deliberately for operator convenience), and the pre-merge grep gate covers passwords only, NOT cookie files. Severity: **P1** (PRODUCT.md §11 ranks credential compromise #3). |
 | TM-20 | **Secrets in logs/summaries** | No redaction mechanism; print statements carry URLs, error text, cookie counts; checkpoints embed target URLs. Contract models are documented non-secret but no scanner enforces it (FR-SEC-004 GAP, scheduled Phase 6). Mitigation: pull the mechanical scanner forward to Phase 3 (S-G8) and redact at log/event boundaries. Severity: **P2**. |
 | TM-21 | **LLM_KEY / env credentials** | `src/.env` holds router keys read at import time (`src/config.py`). Env-based credentials are permitted by the constitution; the risk is import-time availability to any in-process code (TM-03 class) and accidental commit. Mitigation: keep out of Git (already), scope to the captcha subsystem only, drop the global import-time constant in favor of lazy reads. Severity: **P2**. |
 
@@ -347,6 +350,23 @@ Status: planned. Severity: n/a (design constraint).
 | TM-24 | **Harness-bypass via direct runtime use** | Direct `AcquisitionRuntime.run(actor, ctx, options)` skips validation and the gate. Sanctioned answer (FR-POL-004): trusted-internal path, same trust level as actor code; NOT an allowance for external callers. Enforcement is therefore *entry-point discipline*: CLI/import parity (Phase 3) must remove the practical incentive. Status: documented; S-G1 includes the import audit. Severity: **P1** (as exposure grows). |
 | TM-25 | **Doc/code drift corrupts the safety narrative** | CURRENT-STATE.md predates the merged evaluator; SRS marks FR-POL-002..004 as GAP while tests exist. Docs that outrun OR trail reality both break the honest-labeling system (NFR-010) and would let a reviewer approve autonomy increases against a false picture. Mitigation: refresh CURRENT-STATE/SRS statuses citing `tests/test_policy_evaluator.py` + harness gate tests in the next docs PR; add a checklist item reconciling doc labels with merged tests. Severity: **P2**. |
 
+**Audit 2026-09-19** — defects found outside the S-G2 sweep (which covered the
+runtime, loop and manifest builders). Each exported/legacy entry point built paths
+from an identifier, and the LinkedIn consumer reached `subprocess` argv with
+scraped strings.
+
+| ID | Threat | Finding |
+|---|---|---|
+| TM-26 | **Identifier → path interpolation in exporters / legacy CLI** | `src/export/mark.py::export_video(video_id)` interpolated the CLI id into `data/curated/<date>/<id>.jsonl` (arbitrary READ of any `*.jsonl`) and into `data/mark/<id>.json` (arbitrary WRITE of any `*.json`) — reachable as `--export-mark --video ../../../x`. The legacy stage CLI (`python src/pipeline/legacy.py --video <id>`) had the same shape across `data/{raw,normalized,enriched,curated,rejected,manifests}/<id>*`, and `export/manifest.py::write_manifest` trusted `video_entry['video_id']` from caller-supplied data. **Status: closed** — every entry point validates with `require_slug_identifier` (slug charset has no path separators) and resolves through the new `rooted_file()` helper; `_discover_videos` / `build_manifest` skip filesystem names that are not valid ids. Guarded by `tests/test_input_validation.py` (refusal per entry point + a "no file written" assertion). Severity: **P1** (operator/agent-reachable arbitrary write+read; not remotely triggerable). |
+| TM-27 | **Argument injection into `linkedin-cli`** | Scraped data reached `subprocess.run` argv: `send_connect(handle)`, `fetch_profile(handle)` and `search_linkedin(query)` placed an attacker-influenced string directly after the subcommand, so a value like `--json`/`-o` is parsed as a FLAG by the CLI (no shell involved → argument injection, not command execution). **Status: closed** — `safe_handle()` enforces `^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$` (leading alphanumeric ⇒ cannot be a flag) and search queries starting with `-` are refused; the wrappers return `None`/`[]` without spawning anything. Severity: **P2** (bounded by what the pinned CLI accepts, but it is untrusted-data → process-argv flow). |
+| TM-28 | **Declared LinkedIn action limits never enforced + PII exposure of its outputs** | `LINKEDIN_LIMITS` advertised `max_connections_per_day: 20` plus a pacing delay, but `daily_conn_count()` was never consulted and no delay was applied — an auto-connect run could send connection requests without bound (SAFETY / ACCEPTABLE-USE "bounded actions"). The CSV report and state JSON (real names, employers, profile URLs, comment text) were written with the default umask (world-readable), and `linkedin_env()` handed the child process EVERY environment variable, router/LLM keys included (TM-21 class). **Status: closed** — the cap is checked before each send and reported when reached, pacing is `max(configured, 1000 ms)`, reports/state go through `write_private_text` (0600), and the child env is filtered of secret-bearing names. Severity: **P2** (rate/abuse + local PII/secret exposure). |
+
+Residual for this group, stated plainly: the TikTok content-id parser is PATH-based
+(host-agnostic) on purpose — matching the four copies it replaced. Pointing the
+automation at a non-TikTok host therefore remains possible; host/route allow-listing
+is S-G7 (egress scoping, Phase 3→4) and was NOT smuggled in here, because it changes
+navigation behaviour and that requires the live gate (agents.md).
+
 ---
 
 ## 3. Final output
@@ -372,12 +392,18 @@ Status: planned. Severity: n/a (design constraint).
 8. TM-23 — Experimental tool toolkit has no capability mapping (becomes P1 at
    Phase 3 wiring).
 9. TM-24 — Practical harness bypass via direct runtime / dual CLI truths.
+10. TM-26 — Identifier → path interpolation in the exporters / legacy CLI
+    (arbitrary write+read through a CLI id). **Closed 2026-09-19.**
+11. TM-28 — Declared LinkedIn connection budget unenforced; PII reports and the
+    child-process env under-protected. **Closed 2026-09-19.**
 
 ### B. Current bypasses (what an adversary could do *today*)
 
-1. Submit `RunInput(job_id="../…")` (or `video_id=` into the improve loop) and
-   create/overwrite JSON files outside the workspace — **no privilege needed
-   beyond "can start a run."**
+1. ~~Submit `RunInput(job_id="../…")` (or `video_id=` into the improve loop) and
+   create/overwrite JSON files outside the workspace~~ — **closed by S-G2
+   (PR #9)** for the runtime/loop paths, and closed on 2026-09-19 for the
+   exporters, legacy stage CLI and LinkedIn consumer (TM-26). Hostile ids now
+   fail closed naming the field, and every writer path is rooted-resolved.
 2. Start runs without any policy profile (default constructor) or via the
    legacy CLI — no evaluation ever occurs.
 3. As in-process actor code: perform any action the host allows regardless of

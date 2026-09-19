@@ -25,15 +25,13 @@ import argparse
 import json
 import re
 import subprocess
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-MAJOR_TYPES = set()          # breaking is signalled via `!` or footer, not a type
+# Breaking is signalled via `!` or the BREAKING CHANGE footer, never a type name.
 MINOR_TYPES = {"feat"}
 PATCH_TYPES = {"fix", "perf"}
-OTHER_TYPES = {"chore", "docs", "test", "ci", "style", "refactor", "build"}
 
 SUBJECT_RE = re.compile(r"^(\w+)(?:\(([^)]*)\))?(!)?:\s+(.+)$")
 BREAKING_FOOTER_RE = re.compile(r"^BREAKING[- ]CHANGE:", re.MULTILINE)

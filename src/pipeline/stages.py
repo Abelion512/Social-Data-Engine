@@ -13,11 +13,15 @@ Stages: collect → raw → normalize → dedup → quality gate → annotation 
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import List, Optional, Dict, Callable
 
 from src.schema.canonical import Observation
+
+# Nama file output stage (satu file per stage, bukan satu file per record).
+OUTPUT_FILENAME = "records.jsonl"
 
 
 class StageRunner:
@@ -88,22 +92,42 @@ class StageRunner:
         return output_records
 
     def _is_complete(self, stage: str, input_dir: Path, output_dir: Path) -> bool:
-        """Cek apakah stage sudah selesai berdasarkan manifest."""
+        """Cek apakah stage sudah selesai: manifest tertulis + output bisa dibaca.
+
+        Dulu syaratnya `output_count > 0`, jadi stage yang SAH menghasilkan 0
+        record (semua kena quality gate) selamanya dianggap belum selesai dan
+        transform-nya dijalankan ulang tiap resume. Manifest adalah commit marker
+        (ditulis setelah output), jadi keberadaannya + output yang ada sudah cukup.
+        """
         manifest_file = self.dirs["manifests"] / f"{stage}.json"
         if not manifest_file.exists():
             return False
 
         try:
-            with manifest_file.open("r") as f:
+            with manifest_file.open("r", encoding="utf-8") as f:
                 m = json.load(f)
-            return m.get("output_count", 0) > 0 and output_dir.exists()
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, OSError, ValueError):
+            return False
+        if not isinstance(m, dict) or not m:
             return False
 
+        # Output boleh kosong, tapi filenya harus ada (layout baru: records.jsonl;
+        # layout lama: file per record) — kalau tidak, run sebelumnya mati di tengah.
+        return output_dir.exists() and (
+            (output_dir / OUTPUT_FILENAME).exists() or any(output_dir.glob("*.jsonl"))
+        )
+
     def _load_input(self, directory: Path) -> List[Observation]:
-        """Load JSONL records dari directory."""
+        """Load JSONL records dari directory (satu file per stage).
+
+        Format lama (satu file per record, `000000.jsonl` …) tetap dibaca untuk
+        direktori hasil run sebelumnya; kalau `records.jsonl` ada, hanya file itu
+        yang dipakai supaya record lama tidak ikut terbaca dua kali.
+        """
+        current = directory / OUTPUT_FILENAME
+        files = [current] if current.exists() else sorted(directory.glob("*.jsonl"))
         records = []
-        for f in sorted(directory.glob("*.jsonl")):
+        for f in files:
             with f.open("r", encoding="utf-8") as fh:
                 for line in fh:
                     line = line.strip()
@@ -118,11 +142,20 @@ class StageRunner:
         return self._load_input(directory)
 
     def _write_output(self, directory: Path, records: List[Observation]) -> None:
-        """Tulis records ke JSONL."""
-        for i, rec in enumerate(records):
-            out_file = directory / f"{i:06d}.jsonl"
-            with out_file.open("w", encoding="utf-8") as f:
+        """Tulis records ke SATU file JSONL per stage (atomic replace).
+
+        Sebelumnya satu file per record (`000000.jsonl`, `000001.jsonl`, …):
+        2 000 record = 2 000 create/open syscall (≈140 ms, dan 100k record =
+        100k inode). Satu file: ≈2 ms, dan jumlah file tidak tumbuh mengikuti
+        ukuran corpus. Ditulis ke `.tmp` lalu `os.replace` supaya pembaca tidak
+        pernah melihat output setengah jadi (pola sama dengan checkpoint).
+        """
+        directory.mkdir(parents=True, exist_ok=True)
+        tmp = directory / f"{OUTPUT_FILENAME}.tmp"
+        with tmp.open("w", encoding="utf-8") as f:
+            for rec in records:
                 f.write(json.dumps(rec.to_dict(), ensure_ascii=False) + "\n")
+        os.replace(tmp, directory / OUTPUT_FILENAME)
 
     def _write_manifest(self, stage: str, data: Dict) -> None:
         """Tulis stage manifest."""

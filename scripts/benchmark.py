@@ -158,13 +158,19 @@ def _compare_versions() -> None:
 async def _live_one(url: str, max_comments: int, max_scrolls: int,
                     force_camoufox: bool = False) -> RunMetrics:
     from src.collector import collect_video  # import lazy → tetap bisa import di luar
+    from src.tiktok_schema import try_parse_content_id
 
-    video_id = url.rstrip("/").rsplit("/", 1)[-1]
+    # Canonical id via the SAME parser the collector uses. The old
+    # `url.rstrip("/").rsplit("/", 1)[-1]` produced junk ids for URLs with a
+    # query string (`.../video/123?is_from_webapp=1`) and for `/photo/` links.
+    video_id = try_parse_content_id(url) or "<unparsed>"
     t0 = time.time()
     source = "none"
     ok = False
     reported = captured = 0
     coverage = 0.0
+    dup_rate = 0.0
+    n_iterations = 0
     result: dict = {}
     stall = ""
     try:
@@ -172,7 +178,8 @@ async def _live_one(url: str, max_comments: int, max_scrolls: int,
         # fallback) — jangan double-attach di sini (dulu bikin
         # `TypeError: collect_video(..., page=...)`). collect_video() return:
         # {video_id, comments(captured), mode(cdp/camoufox),
-        #  reported_comment_count, coverage, collection_status, ...}
+        #  reported_comment_count, coverage, collection_status,
+        #  pagination, metrics, termination_reason}
         result = await collect_video(
             video_url=url,
             max_scrolls=max_scrolls,
@@ -185,6 +192,15 @@ async def _live_one(url: str, max_comments: int, max_scrolls: int,
             reported = int(result.get("reported_comment_count", 0) or 0)
             cov = result.get("coverage")
             coverage = float(cov if cov is not None else 0.0)
+            # Read ONLY keys collect_video() actually returns (it returns
+            # `pagination` + `metrics` from PaginationState): pages succeeded =
+            # acquisition iterations; dedup ratio from the metrics counters.
+            # (Previously read a `n_iterations` key that never existed → silent
+            # default drift; see docs/PLANNED/sessions follow-up #1.)
+            metrics = result.get("metrics") or {}
+            collected = int(metrics.get("items_collected", 0) or 0)
+            n_iterations = int((result.get("pagination") or {}).get("page_index", 0) or 0)
+            dup_rate = (int(metrics.get("items_deduplicated", 0) or 0) / collected) if collected else 0.0
             ok = captured > 0
         else:
             stall = result.get("error", "unknown_error") if isinstance(result, dict) else "no_result"
@@ -194,9 +210,9 @@ async def _live_one(url: str, max_comments: int, max_scrolls: int,
     elapsed = time.time() - t0
     return RunMetrics(
         video_id=video_id, url=url, elapsed_sec=elapsed,
-        browser_source=source, n_iterations=result.get("n_iterations", 1) if isinstance(result, dict) else 1,
+        browser_source=source, n_iterations=n_iterations or (1 if ok else 0),
         reported=reported, captured=captured,
-        coverage=coverage,
+        coverage=coverage, dup_rate=round(dup_rate, 4),
         avg_quality=0.0, partial=not ok, stall_reason=stall, ok=ok,
     )
 

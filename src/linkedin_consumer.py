@@ -8,10 +8,19 @@ Terpisah dari collector agar TikTok Data Engine bisa dipakai consumer lain.
 from __future__ import annotations
 import json
 import os
+import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
+
+# Repo root on sys.path — needed when run as `python src/linkedin_consumer.py`
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from src.runtime.context import require_slug_identifier, write_private_text  # noqa: E402
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 STATE_DIR = Path.home() / ".tiktok-linkedin" / "state"
@@ -20,9 +29,35 @@ DAILY_CONN_FILE = STATE_DIR / "daily_conn.json"
 
 # ── Config ────────────────────────────────────────────────────────────────────
 LINKEDIN_LIMITS = {
+    # Enforced before every send (SAFETY/ACCEPTABLE-USE: bounded actions).
     "max_connections_per_day": 20,
     "min_delay_between_ms": 30,
 }
+
+# Floor for the inter-request delay. The configured 30 ms was never enforced and
+# is not a safe pacing for an endpoint that flags rapid connection requests, so
+# the effective delay is `max(configured, PACE_FLOOR_MS)`.
+PACE_FLOOR_MS = 1000
+
+# Handles reaching `linkedin-cli`: letters/digits, then letters/digits/underscore/
+# hyphen, and NEVER starting with "-" (the leading-alnum rule is what keeps a
+# scraped handle such as `--json` from being parsed as a CLI flag).
+_HANDLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$")
+
+# TM-21 (least privilege): never hand secret-bearing environment variables to
+# the linkedin-cli child process.
+_SECRET_ENV_RE = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|COOKIE)", re.I)
+
+
+def safe_handle(handle: str) -> Optional[str]:
+    """Return the handle when it is a valid LinkedIn public identifier, else None.
+
+    Guards two things at once: argument injection into the `linkedin-cli` argv
+    (a scraped handle like `--json`/`-o` would otherwise be parsed as a flag) and
+    junk cells in the report/PII surface.
+    """
+    h = (handle or "").strip()
+    return h if _HANDLE_RE.match(h) else None
 
 
 # ── State helpers ─────────────────────────────────────────────────────────────
@@ -40,8 +75,9 @@ def load_json(path: Path, default):
 
 
 def save_json(path: Path, data):
+    """Write state JSON owner-only (0600): these files hold handles/profiles (PII)."""
     ensure_dirs()
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    write_private_text(path, json.dumps(data, ensure_ascii=False, indent=2))
 
 
 def daily_conn_count() -> int:
@@ -76,8 +112,13 @@ def already_connected(handle: str) -> bool:
 
 
 def linkedin_env() -> Dict[str, str]:
-    """Env untuk subprocess linkedin-cli (strip PYTHONPATH, set DISPLAY)."""
-    env = os.environ.copy()
+    """Env untuk subprocess linkedin-cli — least privilege (TM-21).
+
+    Strips PYTHONPATH *and* every secret-bearing variable (router/LLM keys,
+    tokens, credentials, cookies) so a compromised or verbose child cannot read
+    the parent's secrets out of its own environment.
+    """
+    env = {k: v for k, v in os.environ.items() if not _SECRET_ENV_RE.search(k)}
     env.pop("PYTHONPATH", None)
     env.setdefault("DISPLAY", ":0")
     env.setdefault("XAUTHORITY", os.path.expanduser("~/.Xauthority"))
@@ -88,6 +129,10 @@ def linkedin_env() -> Dict[str, str]:
 def search_linkedin(name: str, company: Optional[str] = None) -> List[Dict]:
     """Search LinkedIn via linkedin-cli (darwincr/linkedin-cli)."""
     query = f"{name} {company or ''}".strip()
+    if not query or query.startswith("-"):
+        # Names come from scraped data → never let one become a CLI flag.
+        print(f"[linkedin] refusing search query that could parse as a flag: {query!r}")
+        return []
     try:
         result = subprocess.run(
             ["linkedin-cli", "search", query, "--limit", "3", "--json"],
@@ -102,7 +147,17 @@ def search_linkedin(name: str, company: Optional[str] = None) -> List[Dict]:
 
 
 def send_connect(handle: str, note: Optional[str] = None) -> Optional[Dict]:
-    """Send LinkedIn connection request (darwincr fork: always no-note)."""
+    """Send LinkedIn connection request (darwincr fork: always no-note).
+
+    `note` is kept for signature compatibility and deliberately unused: the
+    pinned fork sends requests without a note. The handle is validated first so
+    a scraped value can never be interpreted as a CLI flag.
+    """
+    clean = safe_handle(handle)
+    if clean is None:
+        print(f"[linkedin] refusing connect for invalid handle: {handle!r}")
+        return None
+    handle = clean
     cmd = ["linkedin-cli", "connect", handle, "--json"]
     last_err = None
     for attempt in range(1, 4):
@@ -128,6 +183,11 @@ def send_connect(handle: str, note: Optional[str] = None) -> Optional[Dict]:
 
 def fetch_profile(handle: str) -> Optional[Dict]:
     """Fetch profile by handle (ground truth from direct link)."""
+    clean = safe_handle(handle)
+    if clean is None:
+        print(f"[linkedin] refusing profile fetch for invalid handle: {handle!r}")
+        return None
+    handle = clean
     try:
         result = subprocess.run(
             ["linkedin-cli", "profile", handle, "--json"],
@@ -187,8 +247,14 @@ def verify_names(comments: List[Dict]) -> Dict:
 
 
 def write_csv_report(comments: List[Dict], matches: List[Dict], connections: List[Dict]) -> Path:
-    """CSV dengan satu row per comment: scraped/enriched/matched/connected status."""
+    """CSV dengan satu row per comment: scraped/enriched/matched/connected status.
+
+    Reports carry personal data (real names, employers, profile URLs, comment
+    text), so they are written owner-only (0600) via `write_private_text` instead
+    of a world-readable default `open()`. The UTF-8 BOM is preserved for Excel.
+    """
     import csv as _csv
+    import io as _io
 
     conn_map = {conn.get("profile"): conn.get("result") for conn in connections}
     match_by_name = {}
@@ -229,12 +295,13 @@ def write_csv_report(comments: List[Dict], matches: List[Dict], connections: Lis
     for suffix, pred in (("_connected.csv", lambda r: r[10] == "YES"),
                          ("_pending.csv", lambda r: r[10] != "YES")):
         path = Path(str(base) + suffix)
-        with open(path, "w", newline="", encoding="utf-8-sig") as f:
-            w = _csv.writer(f)
-            w.writerow(header)
-            for r in rows:
-                if pred(r):
-                    w.writerow(r)
+        buf = _io.StringIO()
+        w = _csv.writer(buf)
+        w.writerow(header)
+        for r in rows:
+            if pred(r):
+                w.writerow(r)
+        write_private_text(path, "\ufeff" + buf.getvalue())   # BOM + mode 0600
         print(f"[csv] {path.name}: {sum(1 for r in rows if pred(r))} rows")
     return base
 
@@ -252,6 +319,9 @@ async def run_linkedin_consumer(
     Baca: data/curated/<date>/<video_id>.jsonl
     Output: CSV report di STATE_DIR
     """
+    # S-G2/TM-13: the id arrives from the CLI, so validate it before it becomes
+    # a path component (`--video ../../etc/passwd` must not read outside data/).
+    video_id = require_slug_identifier(video_id, "video_id")
     today = time.strftime("%Y-%m-%d")
     curated_file = data_dir / "curated" / today / f"{video_id}.jsonl"
     if not curated_file.exists():
@@ -298,16 +368,34 @@ async def run_linkedin_consumer(
                 })
 
     connections = []
+    sends_refused = 0
     if auto_connect and matches:
+        cap = int(LINKEDIN_LIMITS["max_connections_per_day"])
+        pace_s = max(int(LINKEDIN_LIMITS["min_delay_between_ms"]), PACE_FLOOR_MS) / 1000.0
+        sent_today = daily_conn_count()
+        if sent_today >= cap:
+            print(f"[linkedin] daily connection cap already reached ({sent_today}/{cap}) — no sends")
         for m in matches:
+            if sent_today >= cap:
+                print(f"[linkedin] daily cap reached ({sent_today}/{cap}) — stopping sends")
+                break
             profile = m.get("linkedin", {})
-            handle = profile.get("public_identifier") or profile.get("handle", "")
-            if handle and not already_connected(handle):
-                note = None if no_note else generate_note(profile, m.get("comment", {}))
-                result = send_connect(handle, note)
-                if result:
-                    connections.append({"profile": handle, "result": result})
-                    bump_daily_conn_count()
+            raw_handle = profile.get("public_identifier") or profile.get("handle", "")
+            handle = safe_handle(raw_handle)
+            if handle is None:
+                sends_refused += 1
+                print(f"[linkedin] skip invalid handle: {raw_handle!r}")
+                continue
+            if already_connected(handle):
+                continue
+            note = None if no_note else generate_note(profile, m.get("comment", {}))
+            result = send_connect(handle, note)
+            if result:
+                connections.append({"profile": handle, "result": result})
+                sent_today = bump_daily_conn_count()
+                time.sleep(pace_s)      # pacing floor — never hammer the endpoint
+    if sends_refused:
+        print(f"[linkedin] {sends_refused} handle(s) refused by validation")
 
     report_path = write_csv_report(comments, matches, connections)
     return {

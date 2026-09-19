@@ -87,7 +87,7 @@ def main() -> int:
     print(f"  new     : {new_ver}")
 
     if not args.commit:
-        print("  dry-run  : pass --commit --push to apply  (ponytail: no side-effects yet)")
+        print("  dry-run  : pass --commit --push to apply  (no side-effects yet)")
         return 0
 
     _write_new(nmaj, nmin, npt)

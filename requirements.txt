@@ -1,3 +1,11 @@
+# Core runtime — required by real (browser-backed) collection.
+# The deterministic test suites and the no-browser paths are stdlib-only, so CI
+# installs these only for the live paths.
 camoufox>=0.5.5
 requests>=2.31
-colorama>=0.4
+
+# Optional tooling — install on demand; NOT needed by CI suites or core collection.
+# Kept as comments so `pip install -r requirements.txt` stays lean.
+#   nodriver>=0.38      → scripts/export_tiktok_cookies_nodriver.py
+#   playwright>=1.40    → scripts/probe_playwright.py (camoufox already pulls it in)
+#   apify-client>=1.7   → scripts/run_apify_tiktok.py (lazy import; clear error if absent)

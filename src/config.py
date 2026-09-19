@@ -2,7 +2,7 @@
 """
 Shared configuration — 9Router LLM settings.
 
-Digunakan oleh pipeline.py, tiktok_linkedin.py, dan agent lainnya.
+Digunakan oleh pipeline/legacy.py, tiktok_linkedin.py, dan agent lainnya.
 Single source of truth untuk .env loading + model chain.
 """
 from __future__ import annotations

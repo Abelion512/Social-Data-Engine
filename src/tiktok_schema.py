@@ -13,9 +13,9 @@ pipeline berhenti/rollback perlu tahu dari mana data berasal.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Union, Dict, Any
-from datetime import datetime, timezone
-import json
+from functools import lru_cache
+from typing import Optional, List
+import re
 
 # ── Provider-independent runtime primitives ──────────────────────────────────
 # Pagination/retry/termination state, metrics and the termination taxonomy are
@@ -37,7 +37,39 @@ __all__ = [
     "NormalizedComment", "normalize_text", "raw_to_normalized",
     "EnrichedComment", "CuratedComment",
     "append_raw_records", "write_jsonl",
+    "CONTENT_ID_RE", "parse_content_id", "try_parse_content_id",
 ]
+
+# ── TikTok content-id parsing — SINGLE SOURCE OF TRUTH ───────────────────────
+# Both URL forms resolve to the same canonical numeric id:
+#   https://www.tiktok.com/@user/video/7669640839861112071
+#   https://www.tiktok.com/@user/photo/7673343206544706837
+# Collector, provider actor, CLI and benchmark each used to carry their own copy
+# of this regex (benchmark used rsplit("/"), which breaks on `?query` URLs).
+CONTENT_ID_RE = re.compile(r"/(?:video|photo)/(\d+)")
+
+
+def parse_content_id(url: str) -> str:
+    """Canonical numeric content id from a TikTok video/photo URL.
+
+    Raises ``ValueError`` when the URL carries no ``/(?:video|photo)/<digits>``
+    path segment. Digit-only by construction, so the result is always safe to
+    use as a filename component (see ``src.runtime.context.rooted_file``).
+    """
+    m = CONTENT_ID_RE.search(url or "")
+    if not m:
+        raise ValueError(f"not a TikTok video/photo URL: {url!r}")
+    return m.group(1)
+
+
+def try_parse_content_id(url: str) -> str:
+    """Non-raising variant: returns "" when the URL has no canonical id.
+
+    For paths that already treat a missing id as a normal outcome (DOM scrape
+    of a page whose URL changed, route interception of unrelated requests).
+    """
+    m = CONTENT_ID_RE.search(url or "")
+    return m.group(1) if m else ""
 
 
 
@@ -181,11 +213,17 @@ class NormalizedComment:
         return asdict(self)
 
 
+@lru_cache(maxsize=50_000)
 def normalize_text(text: str) -> str:
     """
     Normalisasi ringan: lowercase, unicode normalization, whitespace,
     hapus variasi berlebupan.
     JANGAN hapus slang/emoji — itu signal, bukan noise.
+
+    Pure str→str, jadi dibungkus bounded memo cache (50k entry): pipeline yang
+    sama menormalkan teks yang sama beberapa kali (normalize stage, dedup tier 2,
+    bigram tier 3, manifest) dan duplikat memang umum di corpus ini — hasilnya
+    identik, kerja NFKC-nya cuma sekali.
     """
     import unicodedata
     # NFKC fold

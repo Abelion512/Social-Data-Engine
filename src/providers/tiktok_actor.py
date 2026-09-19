@@ -30,12 +30,12 @@ per agents.md); no live claim is made from headless runs.
 from __future__ import annotations
 
 import inspect
-import re
 from typing import Any, Callable, Dict, Optional
 
-from src.policy.models import CAP_BROWSER_AUTOMATE, CAP_NETWORK_FETCH, Capability
+from src.policy.models import CAP_BROWSER_AUTOMATE, CAP_NETWORK_FETCH
 from src.runtime.actor import AcquisitionActor, PageResult
 from src.runtime.context import RunContext
+from src.tiktok_schema import parse_content_id
 
 # Provenance-honest versioning: the actor mirrors the collector version it
 # wraps (docs/VERSIONING.md — COLLECTOR_VERSION mirrors the semver master).
@@ -138,14 +138,11 @@ class TikTokAcquisitionActor(AcquisitionActor):
 def parse_tiktok_video_id(video_url: str) -> str:
     """Extract the canonical numeric id from a TikTok video/photo URL.
 
-    Mirrors the canonical regex used by the legacy entrypoint
-    (src/tiktok_linkedin.py): r"/(?:video|photo)/(\\d+)" — same semantics,
-    no behavior change.
+    Delegates to ``src.tiktok_schema.parse_content_id`` — one regex, one place
+    (this function used to be a third copy of it, alongside the CLI and the
+    collector). Identical semantics and identical ``ValueError`` message.
     """
-    m = re.search(r"/(?:video|photo)/(\d+)", video_url or "")
-    if not m:
-        raise ValueError(f"not a TikTok video/photo URL: {video_url!r}")
-    return m.group(1)
+    return parse_content_id(video_url)
 
 
 class CollectorApiPageSource:

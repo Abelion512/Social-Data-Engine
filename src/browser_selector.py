@@ -138,12 +138,6 @@ def detect_browsers(ports: Optional[List[int]] = None) -> List[DetectedBrowser]:
     return detected
 
 
-async def _detect_browsers_async(ports: Optional[List[int]] = None) -> List[DetectedBrowser]:
-    """Async wrapper untuk detect_browsers()."""
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, detect_browsers, ports)
-
-
 def _promt_user_browser(detected: List[DetectedBrowser]) -> Optional[DetectedBrowser]:
     """Tampilkan opsi browser ke user dan minta pilihan. Sync input()."""
     icons = {
@@ -496,14 +490,6 @@ class BrowserSession:
 
 # ── TikTok login awareness (CDP) ──────────────────────────────────────────────
 TIKTOK_URL = "https://www.tiktok.com"
-# Cookie names TikTok pakai untuk session/identity. Jika ada salah satu di
-# context user browser → dianggap sudah login.
-_TIKTOK_SESSION_COOKIE_NAMES = {
-    "sessionid", "sessionid_v2", "ttwid", "ttwid_v2", "ttwid_4",
-    "uid", "sid_tt", "sidr", "s_vid",
-}
-
-
 def _cdp_browser_type(detected: "DetectedBrowser") -> str:
     """Map detected browser_type → playwright browser group for CDP connect.
 
@@ -742,8 +728,26 @@ def _resolve_cookie_file() -> Optional[Path]:
         return p if p.exists() else None
     for p in _DEFAULT_COOKIE_FILES:
         if p.exists():
+            _warn_if_in_repo(p)
             return p
     return None
+
+
+def _warn_if_in_repo(path: Path) -> None:
+    """Loud warning when a session-cookie file sits inside the repository.
+
+    TM-19: a committed cookie file is total account compromise. The exported
+    file itself is written 0600 (``src.runtime.context.write_private_text``) and
+    the known names are gitignored; this covers hand-placed copies and the
+    cwd-relative fallbacks, which cannot be git-ignored reliably.
+    """
+    try:
+        repo_root = Path(__file__).resolve().parents[1]      # src/.. == repo root
+        if path.resolve().is_relative_to(repo_root):
+            print(f"[browser] ⚠️  session cookies at {path} live INSIDE the repo — "
+                  "move them to ~/.tiktok-linkedin/ and never commit them (TM-19).")
+    except Exception:  # pragma: no cover — warning must never break cookie loading
+        pass
 
 
 def _parse_netscape_cookie(text: str) -> List[dict]:

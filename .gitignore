@@ -32,6 +32,13 @@ state/
 .tiktok-linkedin/
 *.tokens.json
 
+# Exported session cookies (TM-19) — full account credentials, never commit.
+# Covers the cwd/repo-relative names browser_selector._DEFAULT_COOKIE_FILES probes.
+tiktok_cookies.json
+tiktok_cookies.txt
+tiktok-cookies.json
+tiktok-cookies.txt
+
 # Scraped corpus: data/ output TIDAK di-track lagi (privacy — berisi data asli
 # pengguna TikTok: handle, komentar, timestamp). Yang tersisa di repo hanya
 # placeholder .gitkeep + fixture sintetis data/samples/. Semua output runtime

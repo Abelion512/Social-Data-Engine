@@ -46,12 +46,20 @@ semua reply bertingkat, photo, sticker berhasil di-normalize"*.
 | 8 | **Quality gate** | ✅ | `src/pipeline/quality.py` — `compute_quality_score`, `passes_gate` |
 | 9 | **Multi-tier dedup** | ✅ | exact → normalized → near-duplicate (Jaccard bigram 0.85) |
 | 10 | **Idempotent pipeline + resume** | ✅ | `src/pipeline/stages.py::StageRunner` (manifest-based skip + resume) |
-| 11 | **Cross-platform identity resolution** | ✅ | `src/pipeline/identity.py` (confidence + evidence) |
+| 11 | **Identity resolution (per provider)** | ✅ | `src/pipeline/identity.py::resolve_identity` (confidence + evidence) + `tests/test_canonical_roundtrip.py`. Cross-*provider* name matching was **removed** 2026-09-19 (0 callers, 0 tests — `docs/VERIFICATION.md` §14); re-add with the Phase 5 provider |
 | 12 | **MARK export + manifest** | ✅ | `src/export/mark.py`, `src/export/manifest.py` |
 | 13 | **Auto/Recursive Self-Improvement** | ✅ | `src/pipeline/improve.py` — observe→plan→act→evaluate loop |
 | 14 | **Cookie-based auth (no password)** | ✅ | `run.sh` (zsh-safe); `login_only()` manual browser; tidak ada password di kode |
 
 **Stabil = semua ✅ di atas + test suite pass.**
+
+> ⚠️ **Honest-labelling note** (2026-09-19 ponytail audit — `docs/VERIFICATION.md` §14).
+> Baris **8–11** mengutip modul *modular* (`pipeline/quality.py`, `dedup.py`,
+> `stages.py`, `identity.py`) sebagai evidence. Yang benar-benar dijalankan CLI
+> adalah stage inline di `pipeline/legacy.py`; modul modular punya suite sendiri
+> tetapi belum di-wire ke CLI (debt: `CURRENT-STATE.md` §6.8). Kriteria stabilnya
+> tetap terpenuhi untuk perilaku produksi (live run #2 + 44/44 trace), tetapi
+> evidence yang benar adalah `legacy.py` — bukan modul modular.
 
 ---
 
@@ -77,11 +85,11 @@ python tests/test_self_improvement.py
 ⚠️ Verify reply threaded — reply-parent parsing patched (parse `?comment_id=` URL query); butuh desktop verify (server kill proses) berada di JSONL curated dengan
       `parent_comment_id` yang benar
 ✅ Verify `images`/`sticker` schema + extractor ada — komentar ini text-only (kosong); populated bila komentar ada media URL tertangkap di comment
-- [ ] Verify normalize: `text_raw` + `text_normalized` coexist
-- [ ] `bash -n run.sh` + `zsh -n run.sh` — syntax OK
-- [ ] `python tests/run_dedup_quality_tests.py && python tests/test_self_improvement.py`
-- [ ] Semua kriteria 1–14 di atas ✅
-- [ ] Tag: `git tag -a v1.0.0 -m "MVP v1: TikTok+LinkedIn stable"`
+- [x] Verify normalize: `text_raw` + `text_normalized` coexist — `tests/test_canonical_roundtrip.py` (8) + `tests/run_dedup_quality_tests.py` (8) assert both keys survive persist→load
+- [x] `bash -n run.sh` — OK (2026-09-19); `zsh -n run.sh` runs in CI (zsh is not installed in this sandbox)
+- [x] `python tests/run_dedup_quality_tests.py && python tests/test_self_improvement.py` — 8 + 11 passed, exit 0
+- [ ] Semua kriteria 1–14 di atas ✅ — **coverage ≥95 % masih FAIL** (guest session: 22–36 %); butuh live run desktop dengan login, lihat `agents.md` §Live Test
+- [ ] Tag: `git tag -a v1.0.0 -m "MVP v1: TikTok+LinkedIn stable"` — belum; tag menyusul setelah kriteria coverage terpenuhi (live test gate)
 
 ## Versioning Automation
 
