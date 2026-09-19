@@ -83,3 +83,6 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Agent tooling output — regenerated locally, never committed
+graphify-out/

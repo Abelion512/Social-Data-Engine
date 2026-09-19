@@ -53,6 +53,16 @@ Add to `requirements.txt`:
 Importing an undeclared package **fails CI** (AST scan of `src/` + `scripts/`,
 import-name → dist-name mapping included for the common spellings).
 
+## Optional agent tooling (verified 2026-09-19)
+
+| Tool | What it gives an agent here | Enable (run once, on your machine) |
+|---|---|---|
+| [graphify](https://github.com/Graphify-Labs/graphify) | Queryable knowledge graph of this codebase (tree-sitter AST, local, deterministic) — `graphify explain "canonical_runner"` instead of grepping | `uv tool install graphifyy && graphify install --project` → type `/graphify .` in your assistant |
+| [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp) | Assistant drives the real Chrome over CDP for live tests (click/scroll/inspect) — complements `src/browser_selector.py`, same `--remote-debugging-port` attach model | `npx chrome-devtools-mcp@latest` (MCP server; point your agent client at it) |
+| ~~abelink~~ | **Not integrated — repo returns 404 and no public source exists** (checked 2026-09-19). The built-in CDP attach (real logged-in profile) + Camoufox fallback already cover human-like scrolling; do not import unverified code claiming to replace them. | — |
+
+Both real tools are assistant-side and optional — no `requirements.txt` entry, no runtime import (dependency gate stays green). Do not commit their outputs (`graphify-out/` stays untracked).
+
 ## Where the gates live
 
 | Gate | Script |
