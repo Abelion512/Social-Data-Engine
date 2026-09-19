@@ -50,6 +50,10 @@ def tiktok_to_canonical(raw: RawComment) -> Observation:
             "reply_count": raw.reply_count,
             "create_time": raw.create_time,
             "images": raw.images,
+            # author_id is the identity key `pipeline.identity` resolves on;
+            # without it (and without the `author` annotation below) a
+            # canonical TikTok record could never produce an Entity.
+            "author_id": author.author_id,
             "author_handle": author.author_handle,
             "display_name": author.display_name,
         },
@@ -82,6 +86,21 @@ def tiktok_to_canonical(raw: RawComment) -> Observation:
             annotation_id=f"tiktok:{raw.comment_id}:video_context",
             annotation_type="video_context",
             value=raw.video_context,
+        )
+    )
+
+    # Author as annotation — the shape `pipeline.identity` consumes
+    # (annotation_type == "author"), so identity resolution survives a
+    # persist → load cycle through the canonical JSONL layer.
+    obs.annotations.append(
+        Annotation(
+            annotation_id=f"tiktok:{raw.comment_id}:author",
+            annotation_type="author",
+            value={
+                "author_id": author.author_id,
+                "author_handle": author.author_handle,
+                "display_name": author.display_name,
+            },
         )
     )
 
