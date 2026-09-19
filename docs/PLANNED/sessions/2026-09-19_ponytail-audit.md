@@ -25,7 +25,7 @@ before anything was deleted.
 | 5 | `src/export_tiktok_cookies.py` `serialize_cookie` | byte-identical copy of `scripts/export_tiktok_cookies_nodriver.py::ser` (the live one) — deleting the dead copy removed the duplication as well |
 | 6 | `src/pipeline/legacy.py` `TOXICITY_MAX`, `hash_simhash` | unread threshold; hash wrapper nothing called |
 | 7 | `src/providers/linkedin.py` `_POST_ID_RE` | compiled, never used |
-| 8 | `src/pipeline/identity.py` `cross_platform_match` + `_similarity` | 0 callers, 0 tests — yet labelled `✅` in `VERIFICATION.md` ×4 and `VERSIONING.md` §11. Labelling rule (`ENGINEERING_CONSTITUTION.md`) says a label needs proof: docs corrected instead of keeping the claim |
+| 8 | `src/pipeline/identity.py` `cross_platform_match` + `_similarity` | 0 callers, 0 tests — yet labelled `✅` in `VERIFICATION.md` ×4 and `VERSIONING.md` §11. Labelling rule (`docs/ENGINEERING_CONSTITUTION.md`) says a label needs proof: docs corrected instead of keeping the claim |
 
 ### `delete:` dead imports (repo-wide scan now 0)
 
@@ -77,8 +77,8 @@ updated for the deletion in §1.8.
    deleting them would delete spec'd, tested capability. Deferred with the
    Phase 3 "two CLI truths" trigger.
 2. **`yagni:` unreachable-from-CLI architecture.** `runtime/ harness/ policy/
-   providers/ schema/` (~2 600 lines) plus their suites. Requested by `SRS.md` /
-   `PRD.md`, labelled `IMPLEMENTED`/`PENDING`/`EXPERIMENTAL` in `CURRENT-STATE.md`
+   providers/ schema/` (~2 600 lines) plus their suites. Requested by `docs/SRS.md` /
+   `docs/PRD.md`, labelled `IMPLEMENTED`/`PENDING`/`EXPERIMENTAL` in `docs/CURRENT-STATE.md`
    §1/§1b/§3. Kept — see `docs/PONYTAIL.md` §5 boundary.
 3. **`yagni:` `legacy.llm_enrich_identities`** is on the live path but its LLM
    leg is skipped without a 9Router key; not cut (it is the enrich stage).
@@ -88,7 +88,7 @@ updated for the deletion in §1.8.
 ## 3. Left alone on purpose
 
 Validation at trust boundaries, the S-G2/TM-26 path helpers, error handling,
-provenance, and anything requested by `SRS.md`/`PRD.md`. Nothing under
+provenance, and anything requested by `docs/SRS.md`/`docs/PRD.md`. Nothing under
 `src/runtime/`, `src/harness/`, `src/policy/`, `src/providers/`, `src/schema/`
 was touched.
 

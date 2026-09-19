@@ -71,7 +71,7 @@ guards and honest doc updates.
 - `docs/SECURITY-THREAT-MODEL.md`: TM-19 status updated (0600 writes, gitignore,
   in-repo warning) while naming the residual (repo-relative paths warned, not
   refused).
-- `CURRENT-STATE.md` §5 and `docs/IMPLEMENTATION.md`: paths/inventory fixed.
+- `docs/CURRENT-STATE.md` §5 and `docs/IMPLEMENTATION.md`: paths/inventory fixed.
 
 ## Verification performed after the change
 - 16/16 deterministic suites green (175 assertions); new suite 5/5.

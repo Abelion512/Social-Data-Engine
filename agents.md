@@ -52,7 +52,7 @@ harus melekatkan checklist ini.
 
 ## 🤖 Agent quick-start (contribusi/patching tanpa tebak-tebakan)
 
-1. **Baca dulu, baru edit:** `agents.md` (file ini) · `docs/PONYTAIL.md` (ladder + ledger utang) · `CURRENT-STATE.md` (apa yang ada hari ini) · `SDD.md §3` (invarian boundary — runtime tidak mengimpor providers, dsb.).
+1. **Baca dulu, baru edit:** `agents.md` (file ini) · `docs/AGENT-GUIDE.md` (peta repo + aturan) · `docs/PONYTAIL.md` (ladder + ledger utang) · `docs/CURRENT-STATE.md` (apa yang ada hari ini) · `docs/SDD.md §3` (invarian boundary — runtime tidak mengimpor providers, dsb.).
 2. **Pipeline yang benar:** `src/pipeline/canonical_runner.py` adalah satu-satunya implementasi stage — `src/pipeline/legacy.py` hanya re-export shim. Jangan edit stage di dua tempat.
 3. **Tulis gate, bukan harapan:** logika baru non-trivial menyisakan satu runnable check (suite assert di `tests/`, tanpa framework). Kegagalan = akar masalah, sekali di fungsi bersama.
 4. **Sederhanakan = catat:** marker `ponytail:` inline butuh baris di ledger §6 — CI menolak kalau salah satu hilang. Hindari `TODO/FIXME` (CI gagal).

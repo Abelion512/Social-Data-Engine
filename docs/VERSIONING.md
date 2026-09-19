@@ -57,7 +57,7 @@ semua reply bertingkat, photo, sticker berhasil di-normalize"*.
 > Baris **8–11** mengutip modul *modular* (`pipeline/quality.py`, `dedup.py`,
 > `stages.py`, `identity.py`) sebagai evidence. Yang benar-benar dijalankan CLI
 > adalah stage inline di `pipeline/legacy.py`; modul modular punya suite sendiri
-> tetapi belum di-wire ke CLI (debt: `CURRENT-STATE.md` §6.8). Kriteria stabilnya
+> tetapi belum di-wire ke CLI (debt: `docs/CURRENT-STATE.md` §6.8). Kriteria stabilnya
 > tetap terpenuhi untuk perilaku produksi (live run #2 + 44/44 trace), tetapi
 > evidence yang benar adalah `legacy.py` — bukan modul modular.
 

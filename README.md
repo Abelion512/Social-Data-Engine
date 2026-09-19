@@ -6,6 +6,34 @@ The project currently stabilizes **TikTok acquisition first**, while the archite
 
 > **Current status:** TikTok comment acquisition is live-verified across multiple pages, including the historical ~198-comment failure boundary. PR #2 is still open and has not been merged yet.
 
+## Quickstart (baru clone? mulai di sini)
+
+```bash
+# 1. Environment
+python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
+
+# 2. Verifikasi semua gate (compile, tests, security, deps — ±1 menit)
+bash scripts/preflight.sh .venv/bin/python
+
+# 3. Test suite deterministik (tanpa browser, tanpa network)
+.venv/bin/python tests/test_pipeline.py
+
+# 4. Koleksi live (butuh browser + login — lihat "Live test" di bawah)
+bash run.sh "https://www.tiktok.com/@user/video/ID" --max 50 --scrolls 40
+```
+
+Output koleksi mendarat di `data/{raw,curated,normalized}/<YYYY-MM-DD>/<video_id>.jsonl`.
+
+**Kalau kamu seorang agent (atau mau men-review patch agent):** baca
+[`docs/AGENT-GUIDE.md`](docs/AGENT-GUIDE.md) (peta repo, aturan yang di-enforce,
+workflow kontribusi) dan [`agents.md`](agents.md) (checklist pre-merge + prosedur
+live test human-in-the-loop). Semua dokumen desain ada di [`docs/`](docs/).
+
+**Live test butuh desktop**, bukan server headless: Chrome/Brave dengan
+`--remote-debugging-port=9222 --remote-allow-origins=*`, lalu
+`bash scripts/test_live.sh` (pre-flight) sebelum `run.sh`. Detail:
+`agents.md §Live Test Procedure`.
+
 ## What it does
 
 ```text
@@ -111,8 +139,8 @@ src/
 │   ├── stages.py              # Resumable stage runner
 │   └── improve.py             # Deterministic self-improvement loop
 │
-│   (the CLI runs `pipeline/legacy.py`'s inline stages; the modular modules
-│    above are the tested refactor layer, not yet wired — CURRENT-STATE §6.8)
+│   (the CLI runs `pipeline/canonical_runner.py` — the single stage
+│    implementation; `pipeline/legacy.py` is only a re-export shim)
 ├── export/
 │   ├── mark.py                # MARK Agent export
 │   └── manifest.py            # Dataset / pipeline manifest generation
@@ -151,7 +179,9 @@ logs/                          # Runtime logs
 docs/                          # Design, verification and versioning docs
 ```
 
-`src/pipeline/legacy.py` (the original single-file pipeline, formerly `src/pipeline.py`) and several older entry points remain for compatibility with the previous TikTok pipeline. The `src/pipeline/` package re-exports its public surface, so `from src import pipeline` keeps working (`pipeline.run_video`, `pipeline.RAW_DIR`, …). New development should use the provider/canonical pipeline interfaces where available.
+`src/pipeline/canonical_runner.py` is the single implementation of every stage (normalize → dedup → quality → enrich). `src/pipeline/legacy.py` (the original single-file pipeline, formerly `src/pipeline.py`) remains only as a re-export shim for compatibility: `from src import pipeline` keeps working (`pipeline.run_video`, `pipeline.RAW_DIR`, …). Do not edit stages in two places — edit `canonical_runner.py`.
+
+All design documentation lives under `docs/` (product/spec: `docs/PRODUCT.md`, `docs/PRD.md`, `docs/SRS.md`, `docs/SDD.md`; status: `docs/CURRENT-STATE.md`, `docs/ROADMAP.md`; governance: `docs/DECISIONS.md`, `docs/ENGINEERING_CONSTITUTION.md`, `policies/`; agent onboarding: `docs/AGENT-GUIDE.md`).
 
 ## Canonical data model
 
@@ -382,7 +412,7 @@ Authenticated live TikTok tests are intentionally not required by CI because the
 - [x] Live validation beyond the historical ~198-comment boundary
 - [x] Whole-repo ponytail audit (dead code, dead imports, re-export boilerplate) — `docs/PONYTAIL.md`, record in `docs/VERIFICATION.md` §14
 
-### Next (owner: `ROADMAP.md` — Phase 2 “Enforcement & trust”)
+### Next (owner: `docs/ROADMAP.md` — Phase 2 “Enforcement & trust”)
 
 - [x] Strengthen nested reply collection and thread completeness — thread-aware dedup keeps replies to different parents, `src/pipeline/thread_builder.py` rebuilds conversation trees, and `scripts/trace_comment.py --trace-all` traces 44/44 curated records
 - [x] Improve provider contract tests — `tests/test_actor_harness.py` (22, fake + TikTok-shaped actors through one runtime) and `tests/test_provider_asset_hygiene.py` (5, provider registration/routing + asset hygiene)

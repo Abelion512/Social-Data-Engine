@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Fail-closed checkpoint semantics (ENGINEERING_CONSTITUTION.md §3/§13).
+Fail-closed checkpoint semantics (docs/ENGINEERING_CONSTITUTION.md §3/§13).
 
 Proves ONLY the contract that exists now:
  1. Corrupt checkpoint file      → CheckpointCorrupt raised by load()

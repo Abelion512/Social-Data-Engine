@@ -61,7 +61,10 @@ def compute_quality_score(obs: Observation) -> Dict[str, float]:
 
     url_count = len(_URL_RE.findall(text))
     toxic_hit = bool(_TOXIC_RE.search(text))
-    toxicity = 1.0 if toxic_hit else (0.8 if url_count > 2 else 0.0)
+    # Scoring uses `toxicity_score` below; do not add a parallel `toxicity`
+    # variable here again — the legacy formula derives both from the same
+    # toxic/url signals and pyflakes correctly flags the unused shadow.
+    toxicity_score = min(0.9, 0.9 if toxic_hit else (0.8 if url_count > 2 else 0.0))
 
     # Spam signals (legacy semantics): repeated chars, emoji bursts, digit
     # floods, link bursts. >1 URL = near-certain spam (flat 0.95).
@@ -77,7 +80,6 @@ def compute_quality_score(obs: Observation) -> Dict[str, float]:
     # Score = mean(density, non-spam, non-toxic) × (1-spam) × (1-toxic) —
     # the legacy composite: each axis removes its own share, so a spammy or
     # toxic record cannot survive on semantic density alone.
-    toxicity_score = min(0.9, 0.9 if toxic_hit else (0.8 if url_count > 2 else 0.0))
     quality = (unique_ratio + (1 - spam_prob) + (1 - toxicity_score)) / 3.0
     curated = quality * (1 - spam_prob) * (1 - toxicity_score)
 

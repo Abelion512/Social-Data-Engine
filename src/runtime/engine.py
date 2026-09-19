@@ -105,7 +105,7 @@ class AcquisitionRuntime:
             try:
                 prev = ckpt.load() or {}
             except CheckpointCorrupt as e:
-                # Fail-closed (ENGINEERING_CONSTITUTION.md §3): a corrupt
+                # Fail-closed (docs/ENGINEERING_CONSTITUTION.md §3): a corrupt
                 # checkpoint is NEVER silently treated as a fresh run —
                 # resume must not guess. Report an explicit terminal
                 # recovery failure; discarding/fixing the checkpoint file is

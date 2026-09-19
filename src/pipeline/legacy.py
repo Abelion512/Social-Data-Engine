@@ -4,7 +4,8 @@ TikTok Data Pipeline — legacy CLI surface (compatibility shim).
 
 Since 2026-09-19 the stage implementation lives in ONE place:
 ``src/pipeline/canonical_runner.py`` (modular tiers wired in). This module
-re-exports its public surface so the documented CLI keeps working:
+re-exports its public surface so the documented CLI keeps working (see
+``docs/CURRENT-STATE.md``):
 
   python src/pipeline/legacy.py --video 7472094895228468510   # raw→curated
   python src/pipeline/legacy.py --all                         # semua video di data/raw/
@@ -13,12 +14,13 @@ re-exports its public surface so the documented CLI keeps working:
 
 History: this was a single file at ``src/pipeline.py`` (later
 ``src/pipeline/legacy.py``), which duplicated the modular stages — debt §6.8 /
-CURRENT-STATE §6.8 / PONYTAIL §6. That duplicate is gone; the ladder rung is
+docs/CURRENT-STATE.md §6.8 / docs/PONYTAIL.md §6. That duplicate is gone; the ladder rung is
 "reuse what exists" (docs/PONYTAIL.md).
 """
 from __future__ import annotations
 
-from src.pipeline.canonical_runner import *  # noqa: F401,F403
+# Explicit re-exports only — no `import *` (pyflakes cannot verify star-import
+# surfaces, and the explicit list below IS the compatibility contract).
 from src.pipeline.canonical_runner import (  # noqa: F401  (explicit for IDE/grep)
     CURATED_DIR,
     DATA_DIR,

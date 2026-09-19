@@ -26,7 +26,7 @@ Bug report = fix the **root cause**: grep every caller of the function you touch
 and fix it once, there, rather than guarding each call site.
 
 **Never on the chopping block** (these are in `agents.md` and
-`ENGINEERING_CONSTITUTION.md` too): input validation at trust boundaries, error
+`docs/ENGINEERING_CONSTITUTION.md` too): input validation at trust boundaries, error
 handling that prevents data loss, security, provenance, and anything the user
 explicitly asked for. Lazy code without its check is unfinished: non-trivial
 logic leaves **one runnable check** behind (assert-based self-check or one small
@@ -91,9 +91,9 @@ optionals count as declared). One command for all eight gates:
 
 This audit covers **over-engineering only**. Correctness bugs, security holes and
 performance regressions are a normal review pass — they are not "stuff to
-delete". Equally, code the project explicitly requested (see `SRS.md`,
-`PRD.md`, `ROADMAP.md`, `ENGINEERING_CONSTITUTION.md`) is not speculative: it is
-scoped and labelled (`CURRENT-STATE.md` §1/§1b/§3) rather than thrown away.
+delete". Equally, code the project explicitly requested (see `docs/SRS.md`,
+`docs/PRD.md`, `docs/ROADMAP.md`, `docs/ENGINEERING_CONSTITUTION.md`) is not speculative: it is
+scoped and labelled (`docs/CURRENT-STATE.md` §1/§1b/§3) rather than thrown away.
 
 ## 6. Debt ledger
 
@@ -119,7 +119,7 @@ removed dead code, dead imports and hand-maintained boilerplate, and turned the
 CI "ponytail gate" from an `echo` into a real check.
 
 It deliberately did **not** remove `src/runtime/`, `src/harness/`, `src/policy/`,
-`src/providers/` or `src/schema/`: those layers are requested by `SRS.md` /
-`PRD.md`, carry their own deterministic suites, and are labelled honestly in
-`CURRENT-STATE.md`. Deleting requested, tested architecture is not laziness — it
+`src/providers/` or `src/schema/`: those layers are requested by `docs/SRS.md` /
+`docs/PRD.md`, carry their own deterministic suites, and are labelled honestly in
+`docs/CURRENT-STATE.md`. Deleting requested, tested architecture is not laziness — it
 is destroying the spec to make a diff look small.

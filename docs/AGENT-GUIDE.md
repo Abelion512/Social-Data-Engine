@@ -59,7 +59,7 @@ import-name → dist-name mapping included for the common spellings).
 |---|---|---|
 | [graphify](https://github.com/Graphify-Labs/graphify) | Queryable knowledge graph of this codebase (tree-sitter AST, local, deterministic) — `graphify explain "canonical_runner"` instead of grepping | `uv tool install graphifyy && graphify install --project` → type `/graphify .` in your assistant |
 | [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp) | Assistant drives the real Chrome over CDP for live tests (click/scroll/inspect) — complements `src/browser_selector.py`, same `--remote-debugging-port` attach model | `npx chrome-devtools-mcp@latest` (MCP server; point your agent client at it) |
-| ~~abelink~~ | **Not integrated — repo returns 404 and no public source exists** (checked 2026-09-19). The built-in CDP attach (real logged-in profile) + Camoufox fallback already cover human-like scrolling; do not import unverified code claiming to replace them. | — |
+| abelink | **Belum bisa di-review — repo tidak terlihat dari workspace ini.** Owner mempublikasikan `github.com/Abelion512/abelink` sebagai plug; dari Freebuff workspace repo tersebut 404 (bisa jadi *private* — kredensial GitHub App di sini repository-scoped, tidak bisa membaca repo lain), dan pencarian publik juga nihil. Untuk integrasi: buat repo readable (public / invite bot / tempel README-nya ke issue), lalu reviewer agent bisa menilai source sebelum dipakai — jangan import kode yang belum diverifikasi. | — |
 
 Both real tools are assistant-side and optional — no `requirements.txt` entry, no runtime import (dependency gate stays green). Do not commit their outputs (`graphify-out/` stays untracked).
 

@@ -1,7 +1,7 @@
 # Containment Architecture — mechanisms per maturity level
 
 Companion to `docs/SECURITY-THREAT-MODEL.md` (threats, severities, S-gates) and
-`DECISIONS.md` D-014. This document defines **what containment means
+`docs/DECISIONS.md` D-014. This document defines **what containment means
 mechanically** at each ladder level and what must be provably true before a
 promotion. It deliberately repeats the rule from the threat model: controls
 must live *outside the model's reasoning* — in constructors, path resolution,
@@ -19,21 +19,21 @@ L0  trusted operator            ← TODAY (operating)
 L1  policy-gated actor          ← components exist; not yet mandatory
 L2  capability isolation
 L3  filesystem/network containment
-L4  process/sandbox isolation   ⚠ reverses PRODUCT.md §8 non-goal #6;
+L4  process/sandbox isolation   ⚠ reverses docs/PRODUCT.md §8 non-goal #6;
                                    requires decision amendment first
 L5  autonomous multi-agent execution
 ```
 
 Promotion is one-directional per subsystem and requires: (a) the level's gates
-green (`ROADMAP.md` §Security gates), (b) a promotion note citing those tests
-in `DECISIONS.md`-style record, (c) no known open P0 against the entering
+green (`docs/ROADMAP.md` §Security gates), (b) a promotion note citing those tests
+in `docs/DECISIONS.md`-style record, (c) no known open P0 against the entering
 level's surface.
 
-**Upgrade law (binding — threat model §1.1, `DECISIONS.md` D-015).** Each
+**Upgrade law (binding — threat model §1.1, `docs/DECISIONS.md` D-015).** Each
 transition requires its enforcement class: L0→L1 mandatory gating + safe ids
 (S-G1/G2); L1→L2 capability enforcement (S-G3/G4/G5); L2→L3 the
 filesystem/network boundary (S-G6/G7/G8/G10); L3→L4 process isolation
-(PRODUCT.md §8 amendment first, then S-G9); L4→L5 multi-agent isolation +
+(docs/PRODUCT.md §8 amendment first, then S-G9); L4→L5 multi-agent isolation +
 tamper-evident audit (S-G11–G14). **Implementing or scheduling level N+1
 mechanisms while level N's gates are not green is a merge-blocking
 violation** — describing a level, even in these docs, is not permission to
@@ -157,7 +157,7 @@ run context; scanner trip-wire tests.
 
 ## 6. L4 — Process/sandbox isolation ⚠
 
-**Reversal requirement first.** PRODUCT.md §8 lists sandboxing as OUT by
+**Reversal requirement first.** docs/PRODUCT.md §8 lists sandboxing as OUT by
 decision (FR-SEC-001 documented limitation). Entering L4 therefore starts with
 a decision-record amendment superseding that non-goal — roadmap drift alone is
 forbidden by SDD §7 evolution rules.

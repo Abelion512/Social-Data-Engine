@@ -2,8 +2,8 @@
 
 PR #8 deliverable · 2026-08-23 · Status: **binding reference** for all autonomy
 increases. Companion docs: `docs/architecture/CONTAINMENT.md` (mechanisms per
-maturity level), `DECISIONS.md` **D-014** (the ladder binds autonomy) and
-**D-015** (upgrade law, asset classes, trust boundaries), `ROADMAP.md`
+maturity level), `docs/DECISIONS.md` **D-014** (the ladder binds autonomy) and
+**D-015** (upgrade law, asset classes, trust boundaries), `docs/ROADMAP.md`
 §Security gates (S-gates).
 
 ---
@@ -25,7 +25,7 @@ control below is judged by whether it is enforced *outside the model's reasoning
 
 **Evidence basis.** This model audits code as of this branch (`feat` line
 including merged PR #6 PolicyEvaluator v0 and PR #7 LoopState). Note: several
-docs lag the code — `CURRENT-STATE.md` still lists the evaluator as NOT
+docs lag the code — `docs/CURRENT-STATE.md` still lists the evaluator as NOT
 IMPLEMENTED while `src/policy/evaluator.py` + the harness gate exist and
 `tests/test_policy_evaluator.py` exists. Where doc and code disagree, the
 **code** is audited here; the drift itself is tracked as a finding (TM-16).
@@ -124,7 +124,7 @@ Crossing rules:
 
 Autonomy is earned, never assumed. Each level defines what MUST be true before
 promotion to the next. Promotion requires the cited S-gates green (see
-`ROADMAP.md` §Security gates) plus a decision-record note per promotion.
+`docs/ROADMAP.md` §Security gates) plus a decision-record note per promotion.
 Detailed mechanisms per level live in `CONTAINMENT.md`.
 
 | Level | Name | Actor's effective powers | MUST be true before promoting INTO this level |
@@ -133,7 +133,7 @@ Detailed mechanisms per level live in `CONTAINMENT.md`.
 | **L1** | Policy-gated actor | Submits serialized `RunInput`; execution only via harness whose evaluator gate is ON; deny-by-default | S-G1 (mandatory gate on sanctioned entries incl. CLI), S-G2a (identity-safe job/video ids), `policy_denied` surfaced + tested |
 | **L2** | Capability isolation | Actions are intercepted and matched to granted capabilities; budgets clamped by profile ceilings; state namespaced per actor | S-G3 (declaration↔action linkage at runtime insertion points 2+4), S-G4 (profile ceiling clamps RunOptions), S-G5 (per-actor state namespaces; checkpoint↔actor binding) |
 | **L3** | Filesystem/network containment | Writes confined to declared workspace roots; egress restricted to allowlisted endpoints/proxy; secrets isolated from run processes | S-G6 (workspace jail on all writers), S-G7 (egress allowlist; cookie-store isolation; log secret-redaction), S-G8 (mechanical secret scanner over contracts) |
-| **L4** | Process/sandbox isolation | Actors run out-of-process with OS-enforced containment (container/jail/seccomp-class); capability handoff only via serialized contracts; external kill switch honored between actions | S-G9 (actor subprocess boundary + IPC contract tests), S-G10 (kill switch + wall-clock/network budget axes consumed). ⚠ Reverses PRODUCT.md §8 non-goal #6 — requires explicit decision amendment first |
+| **L4** | Process/sandbox isolation | Actors run out-of-process with OS-enforced containment (container/jail/seccomp-class); capability handoff only via serialized contracts; external kill switch honored between actions | S-G9 (actor subprocess boundary + IPC contract tests), S-G10 (kill switch + wall-clock/network budget axes consumed). ⚠ Reverses docs/PRODUCT.md §8 non-goal #6 — requires explicit decision amendment first |
 | **L5** | Autonomous multi-agent execution | Sub-agents/worktrees spawned with derived, strictly-attenuating grants; aggregate budgets across agents; tamper-evident audit chain | S-G11 (attenuation proof: child grant ⊆ parent grant ∩ profile), S-G12 (aggregate budget axis), S-G13 (signed/hash-chained manifests + approval store live) |
 
 **Current position: L0 operating, L1 components present.** The evaluator v0 and
@@ -156,7 +156,7 @@ even here — is not permission to build it.
 | **L0 → L1** | Mandatory policy enforcement: deny-by-default gate on every sanctioned entry point; identity-safe ids + rooted paths | S-G1, S-G2 |
 | **L1 → L2** | Capability enforcement: actions linked to granted capabilities at runtime; profile ceilings clamp budgets; per-actor state namespaces | S-G3, S-G4, S-G5 |
 | **L2 → L3** | Filesystem/network boundary: workspace jail on all writers; egress allowlist; credential isolation + secret scanning | S-G6, S-G7, S-G8, S-G10 |
-| **L3 → L4** | Process isolation: out-of-process actor boundary + IPC contract tests + kill switch. ⚠ Only after amending PRODUCT.md §8 non-goal #6 | decision amendment + S-G9 |
+| **L3 → L4** | Process isolation: out-of-process actor boundary + IPC contract tests + kill switch. ⚠ Only after amending docs/PRODUCT.md §8 non-goal #6 | decision amendment + S-G9 |
 | **L4 → L5** | Multi-agent isolation + audit: grant attenuation proof, aggregate budgets across agents, tamper-evident attribution chain | S-G11, S-G12, S-G13 (+ S-G14 before any cross-run learning) |
 
 **Upgrade law** — each item is a merge-blocking review criterion:
@@ -292,7 +292,7 @@ strings (review rule + lint grep). Status: enforced-by-absence + review rule
 
 | ID | Threat | Finding |
 |---|---|---|
-| TM-19 | **Plaintext session cookies at rest** | `export_tiktok_cookies.py` writes full TikTok cookies (incl. `sessionid`) as plaintext JSON to `~/.tiktok-linkedin/tiktok-cookies.json`; `_DEFAULT_COOKIE_FILES` also probes repo-relative `tiktok_cookies.json|.txt` — a world-readable or accidentally-committed cookie file is total account compromise. `TIKTOK_COOKIES` env var redirects the source arbitrarily. Mitigation: restrictive file perms (0600), refuse repo-relative cookie paths, keep `.gitignore` coverage, prefer persistent profile over exported copies; rotate on suspected leak. Status: **partially mitigated** — both exporters now write owner-only (`write_private_text`: file 0600, created dir 0700), the cookie-file names probed by `browser_selector._DEFAULT_COOKIE_FILES` are `.gitignore`d, and loading a cookie file that sits inside the repo prints a loud warning. Still open: repo/cwd-relative cookie paths are warned about, not REFUSED (kept deliberately for operator convenience), and the pre-merge grep gate covers passwords only, NOT cookie files. Severity: **P1** (PRODUCT.md §11 ranks credential compromise #3). |
+| TM-19 | **Plaintext session cookies at rest** | `export_tiktok_cookies.py` writes full TikTok cookies (incl. `sessionid`) as plaintext JSON to `~/.tiktok-linkedin/tiktok-cookies.json`; `_DEFAULT_COOKIE_FILES` also probes repo-relative `tiktok_cookies.json|.txt` — a world-readable or accidentally-committed cookie file is total account compromise. `TIKTOK_COOKIES` env var redirects the source arbitrarily. Mitigation: restrictive file perms (0600), refuse repo-relative cookie paths, keep `.gitignore` coverage, prefer persistent profile over exported copies; rotate on suspected leak. Status: **partially mitigated** — both exporters now write owner-only (`write_private_text`: file 0600, created dir 0700), the cookie-file names probed by `browser_selector._DEFAULT_COOKIE_FILES` are `.gitignore`d, and loading a cookie file that sits inside the repo prints a loud warning. Still open: repo/cwd-relative cookie paths are warned about, not REFUSED (kept deliberately for operator convenience), and the pre-merge grep gate covers passwords only, NOT cookie files. Severity: **P1** (docs/PRODUCT.md §11 ranks credential compromise #3). |
 | TM-20 | **Secrets in logs/summaries** | No redaction mechanism; print statements carry URLs, error text, cookie counts; checkpoints embed target URLs. Contract models are documented non-secret but no scanner enforces it (FR-SEC-004 GAP, scheduled Phase 6). Mitigation: pull the mechanical scanner forward to Phase 3 (S-G8) and redact at log/event boundaries. Severity: **P2**. |
 | TM-21 | **LLM_KEY / env credentials** | `src/.env` holds router keys read at import time (`src/config.py`). Env-based credentials are permitted by the constitution; the risk is import-time availability to any in-process code (TM-03 class) and accidental commit. Mitigation: keep out of Git (already), scope to the captcha subsystem only, drop the global import-time constant in favor of lazy reads. Severity: **P2**. |
 
@@ -348,7 +348,7 @@ Status: planned. Severity: n/a (design constraint).
 | ID | Threat | Finding |
 |---|---|---|
 | TM-24 | **Harness-bypass via direct runtime use** | Direct `AcquisitionRuntime.run(actor, ctx, options)` skips validation and the gate. Sanctioned answer (FR-POL-004): trusted-internal path, same trust level as actor code; NOT an allowance for external callers. Enforcement is therefore *entry-point discipline*: CLI/import parity (Phase 3) must remove the practical incentive. Status: documented; S-G1 includes the import audit. Severity: **P1** (as exposure grows). |
-| TM-25 | **Doc/code drift corrupts the safety narrative** | CURRENT-STATE.md predates the merged evaluator; SRS marks FR-POL-002..004 as GAP while tests exist. Docs that outrun OR trail reality both break the honest-labeling system (NFR-010) and would let a reviewer approve autonomy increases against a false picture. Mitigation: refresh CURRENT-STATE/SRS statuses citing `tests/test_policy_evaluator.py` + harness gate tests in the next docs PR; add a checklist item reconciling doc labels with merged tests. Severity: **P2**. |
+| TM-25 | **Doc/code drift corrupts the safety narrative** | docs/CURRENT-STATE.md predates the merged evaluator; SRS marks FR-POL-002..004 as GAP while tests exist. Docs that outrun OR trail reality both break the honest-labeling system (NFR-010) and would let a reviewer approve autonomy increases against a false picture. Mitigation: refresh CURRENT-STATE/SRS statuses citing `tests/test_policy_evaluator.py` + harness gate tests in the next docs PR; add a checklist item reconciling doc labels with merged tests. Severity: **P2**. |
 
 **Audit 2026-09-19** — defects found outside the S-G2 sweep (which covered the
 runtime, loop and manifest builders). Each exported/legacy entry point built paths
@@ -423,7 +423,7 @@ navigation behaviour and that requires the live gate (agents.md).
 
 ### C. Required security gates
 
-Numbered S-gates referenced by the ladder (§1) and scheduled in `ROADMAP.md`
+Numbered S-gates referenced by the ladder (§1) and scheduled in `docs/ROADMAP.md`
 §Security gates:
 
 | Gate | Name | Closes | Earliest phase |

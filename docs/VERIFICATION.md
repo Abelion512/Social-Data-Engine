@@ -483,7 +483,7 @@ credential grep = 0 hits · repo-wide AST scan for undefined globals = 0 remaini
 Docs synced in this pass: README (legacy path + CLI + suite list + roadmap
 checklist), `docs/VERSIONING.md` pre-release checklist (checked only what was
 executed; coverage ≥95 % left explicitly FAIL), `docs/SECURITY-THREAT-MODEL.md`
-TM-19 status, `CURRENT-STATE.md` §5 inventory, `docs/IMPLEMENTATION.md` module
+TM-19 status, `docs/CURRENT-STATE.md` §5 inventory, `docs/IMPLEMENTATION.md` module
 paths.
 
 Live gate: **NOT run** — headless sandbox (no display/CDP, no Camoufox binary),
@@ -633,14 +633,14 @@ only** — correctness/security/perf stayed in §11–§13.
 | 3 | `yagni:` | `src/pipeline/__init__.py` re-typed the whole legacy surface (`_LEGACY_PUBLIC` + 22 assignments), so a symbol could exist in `legacy.py` and be missing from the package | one PEP 562 `__getattr__` delegation; 22 names + private ones + `from … import` forms + `-m` CLI re-verified |
 | 4 | `stdlib:` | `hamming()` hand-rolled popcount | `(a ^ b).bit_count()`; equal on 200 000 random 64-bit pairs |
 | 5 | `native:`/gate | CI step 6 (“ponytail ladder gate”) ended in an unconditional `echo ✅` — it could not fail | now fails on `TODO/FIXME/XXX/HACK` in `src/`+`scripts/` (0 hits) |
-| 6 | honesty | `cross_platform_match` was labelled `✅` in this file ×4 and `VERSIONING.md` §11 with 0 callers and 0 tests | deleted; labels corrected (rule: no label without proof — `ENGINEERING_CONSTITUTION.md`) |
+| 6 | honesty | `cross_platform_match` was labelled `✅` in this file ×4 and `VERSIONING.md` §11 with 0 callers and 0 tests | deleted; labels corrected (rule: no label without proof — `docs/ENGINEERING_CONSTITUTION.md`) |
 | 7 | marker | two silent ceilings (16-bit simhash bucket recall in `legacy.stage_dedup`; DOM-rendered count as the coverage denominator in `collector._probe_reported_count`) | `ponytail:` comments naming ceiling + upgrade path; ledger `docs/PONYTAIL.md` §6 |
 
 **Not cut, deliberately:** `src/runtime/`, `src/harness/`, `src/policy/`,
 `src/providers/`, `src/schema/` (~2 600 lines, unreachable from the CLI) and the
-modular `pipeline/` stages are **requested** by `SRS.md`/`PRD.md` and carry their
+modular `pipeline/` stages are **requested** by `docs/SRS.md`/`docs/PRD.md` and carry their
 own deterministic suites; they are labelled `IMPLEMENTED`/`PENDING`/
-`EXPERIMENTAL` in `CURRENT-STATE.md` §1/§1b/§3. Wiring the modular pipeline into
+`EXPERIMENTAL` in `docs/CURRENT-STATE.md` §1/§1b/§3. Wiring the modular pipeline into
 the CLI changes `curated/` output, so it is deferred to Phase 3 **with the live
 gate**, not done silently. Also untouched: validation, error handling, security,
 provenance.

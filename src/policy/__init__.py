@@ -9,7 +9,7 @@ Evaluator (evaluator.py): PolicyEvaluator v0 — deterministic,
 deny-by-default evaluation of CapabilityRequest → PolicyDecision over an
 immutable, versioned PolicyProfile. Every uncertain path (missing policy,
 unknown capability, malformed request, evaluator error) resolves to DENY.
-See docs/architecture/POLICY-ARCHITECTURE.md and ENGINEERING_CONSTITUTION.md.
+See docs/architecture/POLICY-ARCHITECTURE.md and docs/ENGINEERING_CONSTITUTION.md.
 
 Stdlib only. No provider imports. No LLM, no network, no external service.
 """

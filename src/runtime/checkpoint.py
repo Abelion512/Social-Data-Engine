@@ -10,7 +10,7 @@ from typing import Optional
 class CheckpointCorrupt(RuntimeError):
     """The checkpoint file exists but is unreadable/corrupt.
 
-    Fail-closed policy (ENGINEERING_CONSTITUTION.md §3): a corrupt checkpoint
+    Fail-closed policy (docs/ENGINEERING_CONSTITUTION.md §3): a corrupt checkpoint
     MUST NOT be silently treated as a fresh run. Callers must surface an
     explicit recovery failure; discarding or moving the corrupt file is an
     explicit human recovery decision, never an automatic fallback.

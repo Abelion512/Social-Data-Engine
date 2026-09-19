@@ -98,7 +98,7 @@ class LinkedInAdapter(AgentProvider):
         """Pluggable hook. No scraper is wired by decision, not by omission.
 
         LinkedIn collection is deliberately a registry/route proof-of-concept
-        (CURRENT-STATE.md §3), so this returns an empty list — but never
+        (docs/CURRENT-STATE.md §3), so this returns an empty list — but never
         silently: the reason is printed on the record path so a caller can tell
         "no session configured" from "collected nothing" (policies/TRANSPARENCY.md:
         no code path may hide a failure by converting it into an empty success).
@@ -113,7 +113,7 @@ class LinkedInAdapter(AgentProvider):
                   "(provider is routable; plug a scraper via _scrape_comments)")
             return []
         print(f"[linkedin] session env present but no comment scraper is wired — returning 0 observations "
-              f"for post {post_id} (see CURRENT-STATE.md §3)")
+              f"for post {post_id} (see docs/CURRENT-STATE.md §3)")
         return []
 
 
