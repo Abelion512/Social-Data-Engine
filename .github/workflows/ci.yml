@@ -117,7 +117,10 @@ jobs:
       # Every `ponytail:` marker in src/ + scripts/ must have a matching
       # entry in docs/PONYTAIL.md §6, so the next contributor sees the whole
       # contract (ceiling + upgrade path), not half of it.
-      - name: Ponytail ledger gate — every ponytail: marker has a debt entry
+      # NOTE: step names containing a colon MUST be quoted — an unquoted
+      # "ponytail: marker" made this whole file invalid YAML, so GitHub could
+      # not start the job at all (silent red CI, no logs).
+      - name: "Ponytail ledger gate — every ponytail: marker has a debt entry"
         run: python scripts/check_ponytail_ledger.py
 
       # ── 8. third-party dependency gate — undeclared imports block merge ───
