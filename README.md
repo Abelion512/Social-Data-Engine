@@ -297,7 +297,7 @@ python tests/test_policy_evaluator.py
 for suite in tests/test_*.py tests/run_*_tests.py; do python "$suite" || break; done
 ```
 
-Current local verification reported (25 suites, 282 assertions):
+Current local verification reported (25 suites, 283 assertions):
 
 ```text
 test_acquisition_hardening.py   11 passed

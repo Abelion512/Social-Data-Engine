@@ -19,6 +19,7 @@ surface a real client needs and the refusals that keep a hostile page out
 Stdlib only, deterministic, loopback sockets only (no external network).
 """
 import json
+import socket
 import threading
 import unittest
 import urllib.error
@@ -37,6 +38,36 @@ EXAMPLE_URL = "https://example.social/post/123"
 def _rpc(method, params=None, rid=1):
     return json.dumps({"jsonrpc": "2.0", "id": rid, "method": method,
                        "params": params or {}}).encode()
+
+
+def _raw_exchange(port, request_head, body=b""):
+    """Send a hand-built request and read the reply until the server closes.
+
+    Used only where the *sending* itself is the thing under test: a client that
+    pushes a body the server is about to refuse can lose a race and see EPIPE
+    instead of the reply (observed on CI), so those checks drive the socket
+    directly and never write more than the guard is supposed to read.
+    """
+    with socket.create_connection(("127.0.0.1", port), timeout=15) as sock:
+        sock.sendall(request_head)
+        if body:
+            sock.sendall(body)
+        chunks = []
+        while True:
+            try:
+                data = sock.recv(65536)
+            except (ConnectionResetError, socket.timeout):
+                break
+            if not data:
+                break
+            chunks.append(data)
+        return b"".join(chunks).decode("utf-8", "replace")
+
+
+def _status_of(raw_response):
+    line = raw_response.split("\r\n", 1)[0]
+    parts = line.split()
+    return int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
 
 
 class _ServerMixin:
@@ -165,11 +196,46 @@ class TestHardening(_ServerMixin, unittest.TestCase):
         self.assertIn("chunked", json.loads(body)["error"]["message"])
 
     def test_oversized_body_is_refused(self):
-        payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping",
-                              "pad": "x" * (mcp_http.MAX_BODY_BYTES + 10)}).encode()
-        status, body, _ = self.post(payload)
-        self.assertEqual(status, 413)
-        self.assertIn("melebihi", json.loads(body)["error"]["message"])
+        """The cap is enforced from the header alone — the body is never read.
+
+        Deliberately NOT posted through urllib: pushing 1 MiB races the refusal
+        and the client can be left with BrokenPipe instead of the 413, which
+        made this check flaky across machines. Announcing the length and
+        sending nothing pins the guard deterministically.
+        """
+        raw = _raw_exchange(self.port, (
+            f"POST /mcp HTTP/1.1\r\n"
+            f"Host: 127.0.0.1:{self.port}\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {mcp_http.MAX_BODY_BYTES + 10}\r\n"
+            f"\r\n"
+        ).encode())
+        self.assertEqual(_status_of(raw), 413)
+        self.assertIn("melebihi", raw)
+
+    def test_refusals_close_the_connection(self):
+        """A refused request must not leave its body to poison the next one (V8).
+
+        Every refusal returns before the body is read, and the transport is
+        keep-alive; without an explicit close those bytes would be parsed as the
+        next request on the same socket, letting a caller smuggle a tool call
+        past the Host/Content-Type/size checks it just failed.
+        """
+        body = _rpc("tools/call", {"name": "sde_list_providers", "arguments": {}})
+        heads = {
+            # wrong Content-Type → 415 (the CORS-safelisted-type guard)
+            415: ["POST /mcp HTTP/1.1", f"Host: 127.0.0.1:{self.port}",
+                  "Content-Type: text/plain"],
+            # non-loopback Host → 400 (DNS rebinding)
+            400: ["POST /mcp HTTP/1.1", "Host: evil.example",
+                  "Content-Type: application/json"],
+        }
+        for expected, lines in heads.items():
+            with self.subTest(status=expected):
+                head = "\r\n".join([*lines, f"Content-Length: {len(body)}", "", ""])
+                raw = _raw_exchange(self.port, head.encode(), body)
+                self.assertEqual(_status_of(raw), expected)
+                self.assertIn("Connection: close", raw)
 
     def test_method_and_path_guards(self):
         status, _, headers = self.request("GET", "/mcp")

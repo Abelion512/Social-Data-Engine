@@ -101,12 +101,14 @@ Behaviour is preserved by construction and checked: legacy attribute paths
 | V5 | **Silent-empty bug in `build_manifest`** (correctness, found by writing the tests) — it globbed `data/curated/*.jsonl` (flat) while the pipeline writes `data/curated/<YYYY-MM-DD>/<id>.jsonl`, so a real corpus reported `total_videos: 0` **with no error** — exactly the "empty success hides a failure" class `policies/TRANSPARENCY.md` forbids. | Any consumer of the manifest silently lost the whole dataset. | Both layouts are read (newest date first, first hit per video id wins, flat last), ids still validated (`test_build_manifest_stamps_the_schema`) |
 | V6 | **Traversal through the new status tool** (prevented by design) | — | `require_slug_identifier` + `rooted_file` before any path, hostile filenames skipped when scanning (`test_hostile_video_id_is_refused_before_any_path_is_built`, `test_listing_skips_hostile_filenames`) |
 | V7 | **Auth token exposed through `argv`** — the only way to enable the bridge token was `--token <secret>`, readable by every local process via `ps` / `/proc/<pid>/cmdline`, in a same-machine-isolation design where the token *is* the control | A local unprivileged process could read the secret and then call the read-only-but-powerful tool surface | `SDE_HTTP_TOKEN` is the documented path and is used when the flag is absent (flag still wins); a blank flag now fails closed instead of silently meaning "no auth" (`test_token_comes_from_env_and_the_flag_wins`) |
+| V8 | **Request/response desync on every refused request** (found by CI, after the workflow repair made the job run for the first time) — every refusal returned *before* the body was read, but the transport is HTTP/1.1 keep-alive, so the unread body stayed on the socket: a caller could fail `Host` / `Content-Type` / size, keep the connection, and have the smuggled bytes parsed as the **next** request — bypassing the perimeter V1 just established. The client also *raced* the close and saw `EPIPE` instead of the refusal, which is exactly why the check passed locally and failed on CI. | A refusal could smuggle a tool call past the checks it had just failed. | `_deny()` ends the connection (`Connection: close` + `close_connection = True`) instead of draining — draining an oversized body is the resource sink the cap exists to refuse. `test_refusals_close_the_connection` (raw socket, 415 + 400 paths) and `test_oversized_body_is_refused` rewritten to announce the length and send no body; both verified to **fail** against the pre-fix handler |
 
 Unchanged known debt (not silently "fixed"): URL host allow-list / egress scoping
 (S-G7, TM-17) — it changes navigation, so it belongs to the live gate.
 
-Threat-model rows added: **TM-29** (local HTTP bridge) and **TM-30** (identifier /
-log injection through tool arguments).
+Threat-model rows added: **TM-29** (local HTTP bridge), **TM-30** (identifier /
+log injection through tool arguments) and **TM-31** (undrained body on a keep-alive
+refusal → request desync).
 
 ## 5. Structural change (point 6)
 
@@ -127,7 +129,7 @@ hosts" table, as **UNVERIFIED — do not claim compatibility**.
 | Gate | Result |
 |---|---|
 | `bash scripts/preflight.sh .venv/bin/python` | ✅ all 8 gates green, **25 suites** (baseline 21) |
-| New suites | plugin_host 17 · mcp_http_security 21 · import_layering 9 · run_status 12 |
+| New suites | plugin_host 17 · mcp_http_security 22 · import_layering 9 · run_status 12 |
 | `bash -n integrations/plugin/install.sh` | ✅ |
 | Installer dry-run + real install (temp target, quote/backslash path) | ✅ valid config, exact path round-trip |
 | node adapter (`--list-tools`, `sde_probe`, error path) | ✅ 3 checks in-suite + 90 ms round-trip |
@@ -148,3 +150,35 @@ for the first real collect driven from a host, and for any change to routing.
 - **Not** touch the two-pipeline/CLI-unification debt (`CURRENT-STATE` §6.3/§6.8):
   it changes `curated/` output and therefore needs the live gate.
 - **Not** vendor or mirror any host's source, and no host-specific fixtures.
+
+## 8. Follow-up — CI repair + V8 (same day)
+
+The user's next request was *"fix ci, and push"*. Two separate problems, only one
+of them code:
+
+1. **`.github/workflows/ci.yml` was unparseable.** The step name
+   `Ponytail ledger gate — every ponytail: marker has a debt entry` contains an
+   unquoted `: ` inside a plain scalar, which YAML reads as a mapping — so the file
+   was invalid and **GitHub never started a job**. Four consecutive runs (since
+   `eaf2a97`) reported *"This run likely failed because of a workflow file issue"*
+   with no log and no annotation, which is indistinguishable from an infra blip.
+   Fixed by quoting the scalar (plus a `NOTE`). Verified with `yaml.safe_load` on
+   both workflow files, then by reproducing all 8 CI steps locally the strict way
+   (the compile step has no `2>/dev/null` fallback in CI, unlike `preflight.sh`).
+2. **A billing block, which is not a repo defect.** Earlier runs carried
+   *"The job was not started because recent account payments have failed or your
+   spending limit needs to be increased."* No workflow edit can override that;
+   it needs owner action in GitHub → Settings → Billing & plans. Recorded rather
+   than papered over.
+
+Once the workflow became parseable, run `35556655929` started for the first time
+since 2026-09-19 and immediately **failed at step 4** — exposing V8, which no local
+run could have caught reproducibly because the old check raced the server's close
+against a 1 MiB write and won on this machine. That is the argument for keeping CI
+honest rather than green-by-absence: the bug was a *live bypass of the guard added
+earlier the same day*, and it only surfaced when the gate actually ran.
+
+Re-verified after the fix: 25 suites / 283 assertions, all 8 gates green, the two
+new checks confirmed to fail against the pre-fix handler, and
+`test_mcp_http_security.py` run 3× plus the thread/socket suites repeated to rule
+out further races.

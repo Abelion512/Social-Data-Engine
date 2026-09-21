@@ -144,7 +144,7 @@ through tool args) in `docs/SECURITY-THREAT-MODEL.md`.
 ```bash
 bash scripts/preflight.sh .venv/bin/python          # all 8 gates, 25 suites
 .venv/bin/python tests/test_plugin_host.py          # plugin package contract (17)
-.venv/bin/python tests/test_mcp_http_security.py    # HTTP transport + hardening (21)
+.venv/bin/python tests/test_mcp_http_security.py    # HTTP transport + hardening (22)
 .venv/bin/python tests/test_import_layering.py      # NFR-007 + host-path budget (9)
 .venv/bin/python tests/test_run_status.py           # provenance reader + manifest stamp (12)
 ```

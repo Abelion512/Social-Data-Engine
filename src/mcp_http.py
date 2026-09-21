@@ -115,8 +115,19 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def _deny(self, status: int, message: str, extra_headers: Optional[Dict[str, str]] = None) -> None:
+        """Refuse a request. Every refusal happens *before* the body is read.
+
+        This connection is HTTP/1.1 (keep-alive), so leaving an unread body on
+        the socket would let its bytes be parsed as the next request — a
+        request/response desync that can smuggle a call past the `Host`,
+        `Content-Type` and size checks on the very connection that just failed
+        them. Closing is the fix; draining is not, because an oversized body is
+        exactly the resource sink the cap exists to refuse (V8).
+        """
+        self.close_connection = True
+        headers = {"Connection": "close", **(extra_headers or {})}
         self._send(status, _jsonrpc_error(None, -32001 if status == 401 else -32600, message),
-                   extra_headers)
+                   headers)
 
     def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003 — stdlib hook name
         if not self.quiet:

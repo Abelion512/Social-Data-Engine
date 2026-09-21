@@ -24,7 +24,7 @@ unmerged PR counts as IMPLEMENTED here, no matter how green its tests are.
 | Credential hygiene: cookie/profile auth only, no plaintext creds | grep gate in pre-merge checklist; cookie exports + PII reports/state written 0600 (`src/runtime/context.py::write_private_text`) |
 | Input validation at every non-runtime entry point: ids validated against the slug charset and rooted-resolved before any path is built (exporters, legacy stage CLI, LinkedIn consumer, manifest writer); LinkedIn handles charset-checked before they reach `linkedin-cli` argv; declared 20/day connect budget + pacing enforced | `tests/test_input_validation.py` (15) — refusal per entry point incl. a "no file written" assertion; threat model TM-26/27/28 |
 | One canonical TikTok content-id parser (`src/tiktok_schema.parse_content_id`) — four former copies collapsed; provider actor delegates | `tests/test_input_validation.py::test_content_id_parser_is_single_source` |
-| Host-agnostic plugin surface: the same four tools (`sde_list_providers`, `sde_probe`, `sde_collect`, `sde_run_status`) reachable three ways — **stdio MCP**, **Streamable-HTTP MCP** (`src/mcp_http.py`; loopback by default, hardened 2026-09-21 per TM-29/30), and a **generic plugin folder** (`integrations/plugin/`: manifest + JS adapter + installer, `node:` builtins only, no shell, no npm deps) | `tests/test_plugin_host.py` (17), `tests/test_mcp_http_security.py` (21), `tests/test_run_status.py` (12), `tests/test_import_layering.py` (9); mapping/limits in `docs/INTEGRATIONS/PLUGIN.md` — **no host has been executed against this surface, so no compatibility with any specific agent is claimed or proven** |
+| Host-agnostic plugin surface: the same four tools (`sde_list_providers`, `sde_probe`, `sde_collect`, `sde_run_status`) reachable three ways — **stdio MCP**, **Streamable-HTTP MCP** (`src/mcp_http.py`; loopback by default, hardened 2026-09-21 per TM-29/30), and a **generic plugin folder** (`integrations/plugin/`: manifest + JS adapter + installer, `node:` builtins only, no shell, no npm deps) | `tests/test_plugin_host.py` (17), `tests/test_mcp_http_security.py` (22), `tests/test_run_status.py` (12), `tests/test_import_layering.py` (9); mapping/limits in `docs/INTEGRATIONS/PLUGIN.md` — **no host has been executed against this surface, so no compatibility with any specific agent is claimed or proven** |
 
 ## 1b. PENDING MERGE — PR #5 (open): EXPERIMENTAL until merged
 
@@ -80,7 +80,7 @@ this document's standard (merged + proven) and must not be cited as such.
 `test_canonical_roundtrip` (8) ·
 `test_checkpoint_fail_closed` (4) · `test_dedup` (4) · `test_dedup_scaling` (6) ·
 `test_import_layering` (9) · `test_input_validation` (15) · `test_loop_state` (13) ·
-`test_mcp_http_security` (21) · `test_mcp_server` (14) · `test_pipeline` (13) ·
+`test_mcp_http_security` (22) · `test_mcp_server` (14) · `test_pipeline` (13) ·
 `test_plugin_host` (17) · `test_plugins` (7) ·
 `test_policy_evaluator` (18) · `test_policy_models` (8) ·
 `test_provider_asset_hygiene` (5) · `test_run_status` (12) ·
@@ -88,7 +88,7 @@ this document's standard (merged + proven) and must not be cited as such.
 `test_stages_io` (6) · `test_thread_builder` (7) · `test_tiktok_pagination` (11) ·
 dedup/quality (8) ·
 `py_compile` over `src/**` + `tests/**` and `bash -n`/`zsh -n run.sh`.
-(25 suites / 282 assertions as of the 2026-09-21 plugin/hardening/perf pass — §15 of
+(25 suites / 283 assertions as of the 2026-09-21 plugin/hardening/perf pass — §15 of
 `docs/VERIFICATION.md`; the 19/202 baseline is §14. Ladder + debt ledger:
 `docs/PONYTAIL.md`.)
 

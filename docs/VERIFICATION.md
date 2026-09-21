@@ -689,7 +689,7 @@ timeout) remain as **unverified host notes**, not as a maintained contract.
 |---|---|---|
 | Preflight (all 8) | `bash scripts/preflight.sh .venv/bin/python` | ✅ green, **25 suites** (baseline 21) |
 | Plugin package contract | `.venv/bin/python tests/test_plugin_host.py` | ✅ **17 tests** — manifest identity + schema stamp, "manifest must not duplicate the tool list", transports point at real modules, `node:` builtins only (no non-builtin require, no `shell: true`), handler map == real tool names, installer requires `--dir`, `--dry-run` writes nothing, a hostile path round-trips through the config, unknown flag rejected, node end-to-end (`--list-tools`, `sde_probe`, error propagation; self-skips without node) |
-| HTTP surface + hardening | `.venv/bin/python tests/test_mcp_http_security.py` | ✅ **21 tests**, loopback sockets only — notification → 202, JSON-RPC error → 200 + `error`, parse error → -32700, `GET /mcp` → 405, unknown path → 404, token mode → 401/200, non-loopback bind refused without `--allow-remote`, non-loopback `Host` → 400, wrong `Content-Type` → 415, chunked → 413, oversized → 413, socket timeout set, reflected path truncated |
+| HTTP surface + hardening | `.venv/bin/python tests/test_mcp_http_security.py` | ✅ **22 tests**, loopback sockets only — notification → 202, JSON-RPC error → 200 + `error`, parse error → -32700, `GET /mcp` → 405, unknown path → 404, token mode → 401/200, non-loopback bind refused without `--allow-remote`, non-loopback `Host` → 400, wrong `Content-Type` → 415, chunked → 413, oversized → 413, socket timeout set, reflected path truncated, every refusal closes the connection (V8) |
 | Import layering / NFR-007 | `.venv/bin/python tests/test_import_layering.py` | ✅ **9 tests** — runtime is provider-blind (static AST + runtime check), the host path loads no browser stack, `tools/list` works without `playwright`/`camoufox`, lazy re-exports still resolve, an unknown attribute still raises |
 | Run status reader | `.venv/bin/python tests/test_run_status.py` | ✅ **12 tests** — provenance reader against a synthetic workspace (missing run vs unreadable artifact vs bad id) + `manifest.v1` stamping |
 | MCP stdio surface | `.venv/bin/python tests/test_mcp_server.py` | ✅ **14 tests** (was 12) — `sde_run_status` in the tool list, hostile id and `max_runs: 0` fail closed, control characters in `url` rejected |
@@ -710,10 +710,11 @@ Defects and vulnerabilities fixed in this pass (detail + guards in the session l
 | V5 | **`build_manifest` silently reported `total_videos: 0` for a real corpus** (found by writing the tests) — it globbed `data/curated/*.jsonl` while the pipeline writes `data/curated/<YYYY-MM-DD>/<id>.jsonl`, so a whole dataset vanished with no error — the empty-success class `policies/TRANSPARENCY.md` forbids | both layouts are read (newest date first, first hit per id wins), ids still validated |
 | V6 | **Traversal through the new status tool** (prevented by design) | `require_slug_identifier` + `rooted_file()` before any path is built; hostile filenames skipped when scanning |
 | V7 | **Auth token exposed through `argv`** — the bridge token could only be set as `--token <secret>`, readable by any local process via `ps` / `/proc/<pid>/cmdline`, in a design where same-machine isolation *is* the token | `SDE_HTTP_TOKEN` is now used when the flag is absent (flag still wins), and a blank token fails closed instead of silently disabling auth |
+| V8 | **HTTP request/response desync on every refused request** (surfaced by a CI-only failure of this pass's own suite) — each refusal returned *before* the body was read, but the transport is HTTP/1.1 keep-alive, so the unread body stayed on the socket and its bytes would be parsed as the **next** request: a caller could fail `Host`/`Content-Type`/size, keep the connection, and have the smuggled bytes accepted on the retry. The client also *lost a race* against the close and got `EPIPE` instead of the refusal, which is why the check passed locally and failed on CI | `_deny()` now ends the connection (`Connection: close` + `close_connection = True`) instead of draining — draining an intentionally oversized body is the resource sink the cap exists to refuse. Guarded by `test_refusals_close_the_connection` (raw socket, 415 + 400 paths) and by `test_oversized_body_is_refused` rewritten to announce the length and send no body, so the cap check no longer races a 1 MiB write. Both were verified to *fail* against the pre-fix handler |
 
-Threat-model rows: **TM-29** (local HTTP bridge as an ambient capability) and
-**TM-30** (identifier/log injection through tool arguments) — both in
-`docs/SECURITY-THREAT-MODEL.md` §2.11.
+Threat-model rows: **TM-29** (local HTTP bridge as an ambient capability), **TM-30**
+(identifier/log injection through tool arguments) and **TM-31** (undrained body on a
+keep-alive refusal → request desync) — all in `docs/SECURITY-THREAT-MODEL.md` §2.11.
 
 Not changed: `src/collector.py`, `src/pipeline/**`, `src/runtime/**`. In
 `src/providers/tiktok.py` only two dead re-exports were deleted (no importer
@@ -724,3 +725,29 @@ only — every attribute path is preserved and asserted by
 Live gate: **NOT run** — headless sandbox, and no acquisition path changed. It
 stays mandatory for the first real collect driven from a host, and for any change
 to URL routing (see `docs/INTEGRATIONS/PLUGIN.md §6`).
+
+## 16. 2026-09-21 — CI repair (unparseable workflow) + V8
+
+`.github/workflows/ci.yml` could not be parsed by GitHub since commit `eaf2a97`.
+The step name
+`Ponytail ledger gate — every ponytail: marker has a debt entry` contains an
+unquoted `: ` inside a plain scalar, which YAML reads as a nested mapping, so the
+file was invalid and **no job ever started**: every push reported *"This run likely
+failed because of a workflow file issue"* with no log and no annotation. Four
+consecutive runs (4 days) were red for this reason and it looks identical to an
+infrastructure blip, which is why it went unnoticed. Fixed by quoting the scalar;
+a `NOTE` marks the trap.
+
+| Gate | Perintah | Hasil |
+|---|---|---|
+| Workflow parses | `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))"` | ✅ `ci.yml` lint-and-test = 14 steps; `versioning.yml` was never affected |
+| CI steps reproduced locally | strict compile (no `2>/dev/null` fallback), import+symbol, `bash -n run.sh`, suite glob, security grep, marker gate, ledger gate, dependency gate | ✅ all pass; 25/25 suites, 283 assertions |
+| First real run | Actions run `35556655929` | ✅ workflow accepted and started for the first time since 2026-09-19; job reached step 4 and exposed V8 |
+
+Live gate: **NOT run** — no acquisition path touched.
+
+**Separate, non-code blocker:** earlier runs (`35432278714`, `35432380888`) recorded
+*"The job was not started because recent account payments have failed or your
+spending limit needs to be increased."* That is an account/billing state, not a
+repository defect; a green workflow file cannot override it. Owner action:
+GitHub → Settings → Billing & plans.
