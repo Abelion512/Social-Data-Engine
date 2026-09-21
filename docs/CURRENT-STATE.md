@@ -24,6 +24,7 @@ unmerged PR counts as IMPLEMENTED here, no matter how green its tests are.
 | Credential hygiene: cookie/profile auth only, no plaintext creds | grep gate in pre-merge checklist; cookie exports + PII reports/state written 0600 (`src/runtime/context.py::write_private_text`) |
 | Input validation at every non-runtime entry point: ids validated against the slug charset and rooted-resolved before any path is built (exporters, legacy stage CLI, LinkedIn consumer, manifest writer); LinkedIn handles charset-checked before they reach `linkedin-cli` argv; declared 20/day connect budget + pacing enforced | `tests/test_input_validation.py` (15) — refusal per entry point incl. a "no file written" assertion; threat model TM-26/27/28 |
 | One canonical TikTok content-id parser (`src/tiktok_schema.parse_content_id`) — four former copies collapsed; provider actor delegates | `tests/test_input_validation.py::test_content_id_parser_is_single_source` |
+| Host-agnostic plugin surface: the same four tools (`sde_list_providers`, `sde_probe`, `sde_collect`, `sde_run_status`) reachable three ways — **stdio MCP**, **Streamable-HTTP MCP** (`src/mcp_http.py`; loopback by default, hardened 2026-09-21 per TM-29/30), and a **generic plugin folder** (`integrations/plugin/`: manifest + JS adapter + installer, `node:` builtins only, no shell, no npm deps) | `tests/test_plugin_host.py` (17), `tests/test_mcp_http_security.py` (21), `tests/test_run_status.py` (12), `tests/test_import_layering.py` (9); mapping/limits in `docs/INTEGRATIONS/PLUGIN.md` — **no host has been executed against this surface, so no compatibility with any specific agent is claimed or proven** |
 
 ## 1b. PENDING MERGE — PR #5 (open): EXPERIMENTAL until merged
 
@@ -40,10 +41,10 @@ this document's standard (merged + proven) and must not be cited as such.
 
 | Capability | What exists | Gap |
 |---|---|---|
-| Provenance | Curated↔raw id traceability proven (44/44 via `scripts/trace_comment.py`); improve manifests per iteration; run summaries carry outcome/reason (+ lifecycle/actor fields land with PR #5) | Manifest writing not universal at dataset append; no schema version stamp; verification command is a script habit, not a required interface (FR-PROV-003/004, FR-DAT-003) |
+| Provenance | Curated↔raw id traceability proven (44/44 via `scripts/trace_comment.py`); improve manifests per iteration; run summaries carry outcome/reason (+ lifecycle/actor fields land with PR #5); **`manifest.v1` schema stamp (2026-09-21)** | Manifest writing still not universal at dataset append; the stamp exists but only `build_manifest`/`write_manifest` set it; verification is still a script habit rather than a required interface (FR-PROV-003/004, FR-DAT-003) |
 | Self-improvement measurement | Loop-continuation requires ≥5pp coverage delta; metrics before/after recorded per iteration | No lesson-level delta reports or accept/reject schema; "improved" claims not yet machine-checkable across runs (FR-SI-003 completion, FR-SI-004) |
 | Bounded execution | Item/page/retry budgets enforced; fully-unbounded budgets unrepresentable | Wall-clock and network-call axes exist in `ExecutionBudget` but are consumed nowhere (FR-ACQ-005); legacy scripts/harness agents not uniformly bounded (Constitution §4) |
-| Transparency | Summaries on success+failure; agent trace logs exist in-memory/JSON dump | Traces not integrated with manifest evidence chain (FR-TRANS-003); no run-inspection command (FR-TRANS-004) |
+| Transparency | Summaries on success+failure; agent trace logs exist in-memory/JSON dump; **`sde_run_status` (2026-09-21) reads checkpoint/loop/manifest/improve artifacts and reports coverage, termination reason and iteration count without hand-reading files** | Read-only surface only — no queryable event stream, and traces are still not integrated with the manifest evidence chain (FR-TRANS-003, FR-TRANS-004 partially) |
 | Safe defaults | Version bump dry-run default; capped collection defaults | Arbitrary scripts can open network/write anywhere (Constitution §2 gap) |
 | External-agent surface | Serialized `RunInput`/`RunSummary`; import path complete | CLI predates harness contract (two entry truths, FR-INT-001); schemas lack version stamps on RunInput/RunSummary (FR-INT-002); no packaging (D-012) |
 
@@ -63,7 +64,7 @@ this document's standard (merged + proven) and must not be cited as such.
 |---|---|
 | Policy evaluator / enforcement of declared capabilities (deny-by-default) | FR-POL-002..004 — **Phase 2, next** |
 | `policy_denied` termination reason surfaced through summaries | FR-POL-003 |
-| Manifest schema v1 + version stamps + verification-as-interface | FR-PROV-003/004 |
+| Verification-as-interface (stable exit codes, packaged schemas) + manifest writing at every dataset append | FR-PROV-003/004, FR-DAT-003 — the `manifest.v1` stamp landed 2026-09-21, universality did not |
 | Runtime Human Override verbs (stop/approve/deny/escalate over executing actions) | Constitution §10 PLANNED; LATER roadmap |
 | Lesson store with accepted/rejected verdicts; cross-run strategy learning | FR-SI-004; LATER |
 | Preferences store | LATER |
@@ -74,17 +75,22 @@ this document's standard (merged + proven) and must not be cited as such.
 
 ## 5. Test inventory (deterministic gates, all green as of this session)
 
-`test_acquisition_hardening` (11) · `test_acquisition_runtime` (15) ·
-`test_actor_harness` (22) · `test_canonical_roundtrip` (8) ·
-`test_checkpoint_fail_closed` (4) · `test_dedup` (4) · `test_loop_state` (13) ·
-`test_pipeline` (13) · `test_policy_evaluator` (18) · `test_policy_models` (8) ·
-`test_provider_asset_hygiene` (5) · `test_security_gates_sg2` (17) ·
-`test_self_improvement` (11) · `test_dedup_scaling` (6) · `test_stages_io` (6) ·
-`test_input_validation` (15) · `test_thread_builder` (7) ·
-`test_tiktok_pagination` (11) · dedup/quality (8) ·
+`test_acquisition_hardening` (11) ·
+`test_acquisition_runtime` (15) · `test_actor_harness` (22) ·
+`test_canonical_roundtrip` (8) ·
+`test_checkpoint_fail_closed` (4) · `test_dedup` (4) · `test_dedup_scaling` (6) ·
+`test_import_layering` (9) · `test_input_validation` (15) · `test_loop_state` (13) ·
+`test_mcp_http_security` (21) · `test_mcp_server` (14) · `test_pipeline` (13) ·
+`test_plugin_host` (17) · `test_plugins` (7) ·
+`test_policy_evaluator` (18) · `test_policy_models` (8) ·
+`test_provider_asset_hygiene` (5) · `test_run_status` (12) ·
+`test_security_gates_sg2` (17) · `test_self_improvement` (11) ·
+`test_stages_io` (6) · `test_thread_builder` (7) · `test_tiktok_pagination` (11) ·
+dedup/quality (8) ·
 `py_compile` over `src/**` + `tests/**` and `bash -n`/`zsh -n run.sh`.
-(19 suites / 202 assertions as of the 2026-09-19 ponytail pass — §14 of
-`docs/VERIFICATION.md`; ladder + debt ledger: `docs/PONYTAIL.md`.)
+(25 suites / 282 assertions as of the 2026-09-21 plugin/hardening/perf pass — §15 of
+`docs/VERIFICATION.md`; the 19/202 baseline is §14. Ladder + debt ledger:
+`docs/PONYTAIL.md`.)
 
 CI glob-discovers every `tests/test_*.py` + `tests/run_*_tests.py`, so a suite
 is gated the moment it lands (previously only 2 of 14 ran). Deterministic only:

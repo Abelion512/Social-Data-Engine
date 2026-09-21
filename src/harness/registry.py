@@ -15,7 +15,6 @@ Add a platform:
 """
 from __future__ import annotations
 
-import asyncio
 import importlib
 import re
 from typing import Dict, List, Tuple
@@ -102,5 +101,12 @@ _import_builtin_providers()
 
 # ── async convenience ─────────────────────────────────────────────────────
 def collect_url(url: str, **kwargs):
-    """Sync wrapper: `obs = collect_url(url)`."""
+    """Sync wrapper: `obs = collect_url(url)`.
+
+    `asyncio` is imported here rather than at module scope: it is ~20 ms of
+    interpreter import that a registry-only caller (probing, listing providers,
+    MCP `tools/list`) never uses.
+    """
+    import asyncio
+
     return asyncio.run(harness.collect(url, **kwargs))

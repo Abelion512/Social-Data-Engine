@@ -659,3 +659,68 @@ Live gate: **NOT run** (headless sandbox — same constraint as §7/§9/§11/§1
 Justification: no collection behaviour changed (unreferenced code removed, one
 proven-equivalent popcount, one re-export mechanism, docstrings); the `agents.md`
 live test still owns any change to acquisition.
+
+## 15. 2026-09-21 — host plugin surface (generic) + hardening + import perf
+
+User request: write unit tests, cut startup cost, update the docs, find
+vulnerabilities, land the previously suggested fixes — and, because
+`github.com/Abelion512/abelink` has not passed its own tests, **do not shape this
+repo around Abelink: make it a plain plugin instead**. Full record:
+`docs/PLANNED/sessions/2026-09-21_plugin-hardening-perf.md`; the contract write-up
+is `docs/INTEGRATIONS/PLUGIN.md`.
+
+**Superseded draft (same day, first cut).** The first pass of this session shipped
+an Abelink-shaped package: `integrations/abelink/` (native `plugin.json` +
+`index.js`, an installer that hardcoded the Abelink plugin folder, an MCP-connector
+payload for one agent's channel) plus `tests/test_abelink_integration.py` and
+`docs/INTEGRATIONS/ABELINK.md`. The last part of the request invalidates that
+shape, so all of it was replaced by the host-agnostic `integrations/plugin/`
+(`--dir <host plugin folder>`, no host-specific manifest fields, no embedded host
+adapter — the ~12-line host glue lives in the docs for the host to own), and every
+Abelink claim was demoted to an explicitly **UNVERIFIED** row in
+`docs/INTEGRATIONS/PLUGIN.md §7`. The contract research from that draft is kept as
+a note only; no file, path, comment or test in this repo now assumes a host. The
+Abelink source facts recorded then (`main` @ tree `6957a79`: loader expects
+`plugin.json` + `index.js` with handlers keyed by action name and called as
+`{query}`; `capabilities/mcp-client.mjs` is Streamable-HTTP-only with a 20 s RPC
+timeout) remain as **unverified host notes**, not as a maintained contract.
+
+| Gate | Perintah | Hasil |
+|---|---|---|
+| Preflight (all 8) | `bash scripts/preflight.sh .venv/bin/python` | ✅ green, **25 suites** (baseline 21) |
+| Plugin package contract | `.venv/bin/python tests/test_plugin_host.py` | ✅ **17 tests** — manifest identity + schema stamp, "manifest must not duplicate the tool list", transports point at real modules, `node:` builtins only (no non-builtin require, no `shell: true`), handler map == real tool names, installer requires `--dir`, `--dry-run` writes nothing, a hostile path round-trips through the config, unknown flag rejected, node end-to-end (`--list-tools`, `sde_probe`, error propagation; self-skips without node) |
+| HTTP surface + hardening | `.venv/bin/python tests/test_mcp_http_security.py` | ✅ **21 tests**, loopback sockets only — notification → 202, JSON-RPC error → 200 + `error`, parse error → -32700, `GET /mcp` → 405, unknown path → 404, token mode → 401/200, non-loopback bind refused without `--allow-remote`, non-loopback `Host` → 400, wrong `Content-Type` → 415, chunked → 413, oversized → 413, socket timeout set, reflected path truncated |
+| Import layering / NFR-007 | `.venv/bin/python tests/test_import_layering.py` | ✅ **9 tests** — runtime is provider-blind (static AST + runtime check), the host path loads no browser stack, `tools/list` works without `playwright`/`camoufox`, lazy re-exports still resolve, an unknown attribute still raises |
+| Run status reader | `.venv/bin/python tests/test_run_status.py` | ✅ **12 tests** — provenance reader against a synthetic workspace (missing run vs unreadable artifact vs bad id) + `manifest.v1` stamping |
+| MCP stdio surface | `.venv/bin/python tests/test_mcp_server.py` | ✅ **14 tests** (was 12) — `sde_run_status` in the tool list, hostile id and `max_runs: 0` fail closed, control characters in `url` rejected |
+| Perf (importtime + wall clock, 3 runs each) | see the session log §2 | ✅ `import src.mcp_server` 80 → **51 ms**; one-shot `tools/list` 85 → **51 ms**; `import src.providers.base` 84 → **27 ms**; browser stack (`collector`, `browser_selector`, `playwright`, `camoufox`, `asyncio`, `urllib.request`) no longer on the host path |
+| Installer | `bash -n integrations/plugin/install.sh` + dry-run + real install into a temp target (quote/backslash path) | ✅ `manifest.json` + `index.js` + `plugin.runtime.json` written with absolute repo root/interpreter; refuses an interpreter that cannot `import src.mcp_server`; refuses a newline path |
+| HTTP bridge boot | `.venv/bin/python -m src.mcp_http --port 8799` | ✅ ready line + tool list; `--help` shows loopback defaults |
+| Dependency gate | `python scripts/check_dependencies.py` | ✅ unchanged — new Python is stdlib-only, the JS imports only `node:` builtins |
+
+Defects and vulnerabilities fixed in this pass (detail + guards in the session log
+§4):
+
+| # | Finding | Fix + guard |
+|---|---|---|
+| V1 | **Drive-by tool invocation over HTTP** — any client reaching the port executed tools; `Host` unchecked (DNS rebinding) and the `Content-Type` was never inspected, so a CORS-safelisted `text/plain` POST worked with no preflight | loopback `Host` required (`400`), `application/json` required (`415`), `nosniff` + `no-store` |
+| V2 | **Resource exhaustion / slow clients** — no socket timeout, chunked bodies mis-parsed into an empty request, oversize bodies only partially guarded | 30 s socket timeout, chunked refused, `Content-Length` required + capped at 1 MiB (`413`) |
+| V3 | **Log / response injection through tool args** — `\r\n`/`NUL` reached error text; the HTTP layer echoed an unbounded request path | control characters rejected in `url`; reflected path truncated to 200 chars |
+| V4 | **Config injection in the installer** — the runtime config was written by shell interpolation of two filesystem paths | config written by the already-validated interpreter via `json.dump`; newline paths refused |
+| V5 | **`build_manifest` silently reported `total_videos: 0` for a real corpus** (found by writing the tests) — it globbed `data/curated/*.jsonl` while the pipeline writes `data/curated/<YYYY-MM-DD>/<id>.jsonl`, so a whole dataset vanished with no error — the empty-success class `policies/TRANSPARENCY.md` forbids | both layouts are read (newest date first, first hit per id wins), ids still validated |
+| V6 | **Traversal through the new status tool** (prevented by design) | `require_slug_identifier` + `rooted_file()` before any path is built; hostile filenames skipped when scanning |
+| V7 | **Auth token exposed through `argv`** — the bridge token could only be set as `--token <secret>`, readable by any local process via `ps` / `/proc/<pid>/cmdline`, in a design where same-machine isolation *is* the token | `SDE_HTTP_TOKEN` is now used when the flag is absent (flag still wins), and a blank token fails closed instead of silently disabling auth |
+
+Threat-model rows: **TM-29** (local HTTP bridge as an ambient capability) and
+**TM-30** (identifier/log injection through tool arguments) — both in
+`docs/SECURITY-THREAT-MODEL.md` §2.11.
+
+Not changed: `src/collector.py`, `src/pipeline/**`, `src/runtime/**`. In
+`src/providers/tiktok.py` only two dead re-exports were deleted (no importer
+repo-wide); `src/harness/**` and `src/providers/base.py` changed *import timing*
+only — every attribute path is preserved and asserted by
+`tests/test_import_layering.py`.
+
+Live gate: **NOT run** — headless sandbox, and no acquisition path changed. It
+stays mandatory for the first real collect driven from a host, and for any change
+to URL routing (see `docs/INTEGRATIONS/PLUGIN.md §6`).

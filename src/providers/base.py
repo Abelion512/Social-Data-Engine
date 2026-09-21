@@ -77,5 +77,13 @@ class AgentProvider(ProviderAdapter):
         return await a.run()
 
 
-# Re-export
-from src.harness.tools import AgentTool  # noqa: E402
+# Re-export (lazy — PEP 562). `AgentTool` lives in the browser-agent layer
+# (`src.harness.tools`), and importing it eagerly made EVERY provider import pull
+# src.harness → agent → collector → browser_selector (urllib.request +
+# playwright + camoufox, ~50 ms) just to register a URL pattern. Attribute and
+# `from src.providers.base import AgentTool` access still resolve.
+def __getattr__(name: str):
+    if name == "AgentTool":
+        from src.harness.tools import AgentTool
+        return AgentTool
+    raise AttributeError(f"module 'src.providers.base' has no attribute {name!r}")

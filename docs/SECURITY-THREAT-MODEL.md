@@ -324,6 +324,16 @@ Experimental acquisition tooling reclassified by D-011. Findings:
 | TM-22 | **Registry shadowing / import side effects** | `Harness.register` prepends patterns (last registration wins); built-ins import at module import time. Any code that imports `src.harness.registry` and registers a broader pattern hijacks URL routing for existing providers. Third-party adapters get full process privileges (Constitution §14 DOCUMENTED ONLY). Mitigation: freeze builtin routes / require explicit precedence tokens; treat adapter registration as a privileged operation unavailable to submitted runs. Severity: **P2** (experimental surface; must not reach product entry points ungated — enforce via NFR-007-style import audits extended to the registry). |
 | TM-23 | **Tool toolkit lacks capability mapping** | BrowserAgent tools (`browser.read/click/scroll/expand_replies/route.capture/api.fetch/media.enrich`, captcha solver) declare no capabilities and pass no gate; they are exactly the "excessive capability" class an adversarial agent would invoke. Mitigation: when this package becomes the TikTok actor's page source (Phase 3), each tool maps to a declared capability evaluated per action (feeds S-G3); stealth/captcha helpers stay behind REQUIRE_APPROVAL per D-007. Severity: **P1** at Phase 3 wiring time; P2 today (experimental). |
 
+**Audit 2026-09-21** — the plugin surface added this session (§`docs/INTEGRATIONS/PLUGIN.md`)
+is a new connector: it exposes the same tools that previously existed only as
+in-process function calls, and one of its transports had a listen socket. Two
+findings, both closed the same day.
+
+| ID | Threat | Finding |
+|---|---|---|
+| TM-29 | **Local HTTP bridge as an ambient capability** | The Streamable-HTTP transport (`src/mcp_http.py`) executed any registered tool for any client that could reach the port, and nothing separated a hostile page from the operator: the `Host` header was never validated (a hostname resolving to 127.0.0.1 = DNS rebinding), and **any** `Content-Type` was accepted — including the CORS-safelisted `text/plain`, which a page can send without a preflight. Bodies had no required/size-capped `Content-Length`, chunked framing was mis-parsed into an empty request, no socket timeout existed (half-open client pins a worker), and replies carried no cache/sniff headers. **Status: closed 2026-09-21 for the browser-reachable class** — loopback bind by default (`--allow-remote` is the only opt-out), `Host` must be loopback (`400`), `Content-Type: application/json` required (`415`), `Content-Length` required and capped at 1 MiB with chunked refused (`413`), 30 s socket timeout, optional constant-time bearer token (never logged; supplied through `SDE_HTTP_TOKEN`, since `--token` would put a secret in `argv`, which any local process can read, and a blank token fails closed), `Cache-Control: no-store` + `X-Content-Type-Options: nosniff`. Guarded by `tests/test_mcp_http_security.py` (21). Residual (deliberate, stated): the surface is read-only but *powerful* — a `sde_collect` call drives the logged-in browser (TM-18/TM-23) — and any process running as this user can call it. The bridge is a capability grant, so the stdio transport (no socket) stays the recommended path. Severity: **P1** (local + cross-origin reachable, bounded to the read-only tool set today). |
+| TM-30 | **Identifier / log injection through tool arguments** | Tool args reached error strings and reflected responses unescaped: `url` was length-checked but `\r`, `\n` and `NUL` passed through into error text, and the HTTP layer echoed an unbounded request path — enough to forge lines in a line-oriented log consumer, or grow a response arbitrarily. `video_id` on the new status tool is the usual TM-13 class. **Status: closed 2026-09-21** — control characters rejected in `url`, reflected paths truncated (200 chars), and the status reader validates ids with `require_slug_identifier` + `rooted_file()` before any path is built (hostile filenames are skipped when scanning). Guarded by `tests/test_mcp_server.py`, `tests/test_mcp_http_security.py`, `tests/test_run_status.py`. Severity: **P2**. |
+
 ### 2.12 Future worktrees
 
 Not implemented; no repository/worktree manipulation exists in code. Precondition
@@ -396,6 +406,10 @@ navigation behaviour and that requires the live gate (agents.md).
     (arbitrary write+read through a CLI id). **Closed 2026-09-19.**
 11. TM-28 — Declared LinkedIn connection budget unenforced; PII reports and the
     child-process env under-protected. **Closed 2026-09-19.**
+12. TM-29 — Local HTTP bridge was an ambient capability (drive-by tool calls via
+    DNS rebinding / CORS-safelisted content type). **Closed for the
+    browser-reachable class 2026-09-21**; the residual is that the tool set is
+    read-only but powerful, so a host should prefer stdio over the socket.
 
 ### B. Current bypasses (what an adversary could do *today*)
 

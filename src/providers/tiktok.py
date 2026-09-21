@@ -17,15 +17,13 @@ from src.schema.canonical import Observation
 from src.schema.mapper import tiktok_to_canonical
 from src.tiktok_schema import RawComment
 
-try:
-    from camoufox.async_api import AsyncCamoufox
-except Exception:
-    AsyncCamoufox = None
-
-try:
-    from src.browser_selector import BrowserSession
-except Exception:
-    BrowserSession = None
+# NOTE (2026-09-21): two module-level `try: import` re-exports were deleted here
+# (`AsyncCamoufox`, `BrowserSession`) — nothing in the repo imported either name
+# from this module, and pulling `src.browser_selector` at import time cost ~28 ms
+# (urllib.request + asyncio + playwright/camoufox attempt) on every caller that
+# only needed the URL→adapter routing table, e.g. an MCP `tools/list`. The
+# browser session is still reached lazily where it is actually used
+# (`run_agent` → `src.harness.agent`).
 
 
 class TikTokAdapter(AgentProvider):

@@ -88,15 +88,46 @@ plugin yang gagal import tidak pernah membungkam run — errornya tampil, author
 memperbaiki. Direktori plugin tambahan: env `PLUGIN_PATHS` (dipisah `:`).
 Demo end-to-end deterministic: plugin `example` (routing, probe, collect).
 
-## Optional agent tooling (verified 2026-09-19)
+## SDE as a plugin — host-agnostic, dua transport
+
+Arah sebaliknya: host mana pun bisa memakai SDE tanpa clone repo. **Repo ini
+adalah plugin, bukan integrasi untuk satu host tertentu** — tidak ada kode,
+path, maupun tes di sini yang mengasumsikan sebuah agent.
+
+```bash
+# A. stdio MCP (host MCP standar: Claude/Cursor/IDE agent/`mcp` CLI)
+.venv/bin/python -m src.mcp_server
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | .venv/bin/python -m src.mcp_server
+
+# B. Streamable HTTP MCP (host yang hanya bisa URL)
+.venv/bin/python -m src.mcp_http --port 8765
+curl -s localhost:8765/health
+
+# C. Paket plugin generik (manifest + adapter JS + installer)
+bash integrations/plugin/install.sh --dir <folder-plugin-host> --dry-run
+```
+
+Tools: `sde_list_providers`, `sde_probe`, `sde_collect`, `sde_run_status`
+(status/provenance run dari artefak yang sudah ada — read-only). Subset protokol
+MCP resmi (`initialize`, `tools/list`, `tools/call`, `ping`); error per-request
+fail-closed, server tetap hidup.
+
+Kontrak test: `tests/test_mcp_server.py`, `tests/test_mcp_http_security.py`,
+`tests/test_plugin_host.py`, `tests/test_import_layering.py`,
+`tests/test_run_status.py`. Panduan host (termasuk batasan jujur + status host
+yang **belum terverifikasi**): [`docs/INTEGRATIONS/PLUGIN.md`](INTEGRATIONS/PLUGIN.md).
+Jangan duplikasi logika tool di JS — `index.js` hanya adapter yang memanggil
+`src/mcp_server.py`.
+
+## Optional agent tooling (assistant-side) — verified 2026-09-21
 
 | Tool | What it gives an agent here | Enable (run once, on your machine) |
 |---|---|---|
 | [graphify](https://github.com/Graphify-Labs/graphify) | Queryable knowledge graph of this codebase (tree-sitter AST, local, deterministic) — `graphify explain "canonical_runner"` instead of grepping | `uv tool install graphifyy && graphify install --project` → type `/graphify .` in your assistant |
 | [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp) | Assistant drives the real Chrome over CDP for live tests (click/scroll/inspect) — complements `src/browser_selector.py`, same `--remote-debugging-port` attach model | `npx chrome-devtools-mcp@latest` (MCP server; point your agent client at it) |
-| abelink | **Belum bisa di-review — repo tidak terlihat dari workspace ini.** Owner mempublikasikan `github.com/Abelion512/abelink` sebagai plug; dari Freebuff workspace repo tersebut 404 (bisa jadi *private* — kredensial GitHub App di sini repository-scoped, tidak bisa membaca repo lain), dan pencarian publik juga nihil. Untuk integrasi: buat repo readable (public / invite bot / tempel README-nya ke issue), lalu reviewer agent bisa menilai source sebelum dipakai — jangan import kode yang belum diverifikasi. | — |
+| [abelink](https://github.com/Abelion512/abelink) | **UNVERIFIED — jangan klaim kompatibel.** Kontraknya pernah dibaca dari source (`main` @ `6957a79`, 2026-09-21): plugin folder `plugin.json` + `index.js`, MCP client HTTP-only, timeout 20 s. Paket plugin generik di repo ini bisa diadaptasi (contoh 12 baris di dokumen), tapi **belum pernah dijalankan di instance Abelink** dan Abelink belum lolos test-nya sendiri | contoh adapter: [`docs/INTEGRATIONS/PLUGIN.md §4`](INTEGRATIONS/PLUGIN.md) |
 
-Both real tools are assistant-side and optional — no `requirements.txt` entry, no runtime import (dependency gate stays green). Do not commit their outputs (`graphify-out/` stays untracked).
+These two tools are optional, assistant-side, and never imported at runtime — no `requirements.txt` entry, no runtime import (dependency gate stays green). Do not commit their outputs (`graphify-out/` stays untracked). The `abelink` row is **not** an integration: it is a note, kept UNVERIFIED until someone actually runs it (see the table).
 
 ## Where the gates live
 

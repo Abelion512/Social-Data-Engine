@@ -171,7 +171,16 @@ tests/
 ├── test_thread_builder.py    # Reply-tree reconstruction invariants
 ├── test_provider_asset_hygiene.py # Provider/asset regression guards
 ├── test_input_validation.py  # Traversal / argv-injection / limit enforcement
+├── test_plugins.py            # External provider plugin contract
+├── test_mcp_server.py         # MCP stdio protocol surface
+├── test_mcp_http_security.py  # Streamable-HTTP transport + hardening refusals
+├── test_plugin_host.py        # Generic plugin package (manifest + JS adapter + installer)
+├── test_run_status.py         # Run/provenance reader + manifest.v1 stamp
+├── test_import_layering.py    # Provider-blind runtime import budget (NFR-007)
 └── run_dedup_quality_tests.py
+
+integrations/
+└── plugin/                   # This engine as a host-agnostic plugin folder (manifest + JS adapter + installer)
 
 data/                         # Runtime / sample datasets
 state/                         # Local job checkpoints
@@ -196,6 +205,29 @@ cp -r plugins/example plugins/myplatform   # edit URL_PATTERN, probe(), collect(
 Semua provider mengembalikan canonical `Observation` lewat satu registry
 (`src/harness/registry.py`) — routing by URL regex, introspeksi via
 `--list-plugins`. Panduan lengkap: `docs/AGENT-GUIDE.md §Pluggable providers`.
+
+## Host integration — SDE as a plugin
+
+SDE juga bisa dipakai **dari dalam** host lain. Empat tool yang sama
+(`sde_list_providers`, `sde_probe`, `sde_collect`, `sde_run_status`) tersedia lewat
+tiga jalur, dan **tidak ada satu host pun yang di-hardcode** di repo ini:
+
+```bash
+# A. stdio MCP (host MCP standar) — direkomendasikan: tanpa socket, tanpa timeout bridge
+.venv/bin/python -m src.mcp_server
+
+# B. MCP over Streamable HTTP (host yang hanya bisa URL)
+.venv/bin/python -m src.mcp_http --port 8765     # loopback-only secara default
+
+# C. folder plugin generik
+bash integrations/plugin/install.sh --dir <folder-plugin-host> --dry-run
+```
+
+`index.js` hanya adapter transport: tidak ada logika routing/validasi kedua di JS,
+hanya `node:` builtin, tidak pernah lewat shell. Postur keamanan bridge, contoh
+adapter untuk host yang menuntut format manifest sendiri, dan batasan jujurnya
+(termasuk host yang **belum** diverifikasi):
+[`docs/INTEGRATIONS/PLUGIN.md`](docs/INTEGRATIONS/PLUGIN.md).
 
 ## Canonical data model
 
@@ -265,7 +297,7 @@ python tests/test_policy_evaluator.py
 for suite in tests/test_*.py tests/run_*_tests.py; do python "$suite" || break; done
 ```
 
-Current local verification reported (19 suites, 202 assertions):
+Current local verification reported (25 suites, 282 assertions):
 
 ```text
 test_acquisition_hardening.py   11 passed
@@ -275,12 +307,18 @@ test_canonical_roundtrip.py      8 passed
 test_checkpoint_fail_closed.py   4 passed
 test_dedup.py                    4 passed
 test_dedup_scaling.py            6 passed
+test_import_layering.py          9 passed
 test_input_validation.py        15 passed
 test_loop_state.py              13 passed
+test_mcp_http_security.py       21 passed
+test_mcp_server.py              14 passed
 test_pipeline.py                13 passed
+test_plugin_host.py             17 passed
+test_plugins.py                  7 passed
 test_policy_evaluator.py        18 passed
 test_policy_models.py            8 passed
 test_provider_asset_hygiene.py   5 passed
+test_run_status.py              12 passed
 test_security_gates_sg2.py      17 passed
 test_self_improvement.py        11 passed
 test_stages_io.py                6 passed
@@ -298,6 +336,16 @@ character-bigram size window (`J ≤ min(|A|,|B|)/max(|A|,|B|)`), which took tha
 tier from ≈12 s to ≈0.4 s at 5 000 records with an output-identical result set
 (differential tests in `tests/test_dedup_scaling.py`, numbers in
 `docs/VERIFICATION.md` §12).
+
+### Plugin/host startup cost
+
+A host spawns this engine once per tool call, so import cost is user-visible. The
+host path (`src/mcp_server.py`) no longer drags in the browser stack: importing it
+is **51 ms** (was 80 ms), a one-shot `tools/list` round-trip is **51 ms** (was
+85 ms), and `playwright`/`camoufox`/`asyncio` are not loaded at all — which also
+means listing tools and probing still work in an environment without the optional
+browser packages. Enforced by `tests/test_import_layering.py`; measurements in
+`docs/VERIFICATION.md` §15.
 
 ### Live test
 
@@ -430,8 +478,8 @@ Authenticated live TikTok tests are intentionally not required by CI because the
 
 - [x] Strengthen nested reply collection and thread completeness — thread-aware dedup keeps replies to different parents, `src/pipeline/thread_builder.py` rebuilds conversation trees, and `scripts/trace_comment.py --trace-all` traces 44/44 curated records
 - [x] Improve provider contract tests — `tests/test_actor_harness.py` (22, fake + TikTok-shaped actors through one runtime) and `tests/test_provider_asset_hygiene.py` (5, provider registration/routing + asset hygiene)
-- [ ] Add richer dataset manifests and reproducibility metadata — manifest schema v1 + version stamps are Phase 2 work (FR-PROV-003/004)
-- [ ] Stabilize the canonical pipeline boundary before adding more providers — the provider-blind runtime import audit test (NFR-007) is scheduled for Phase 2
+- [ ] Add richer dataset manifests and reproducibility metadata — the `manifest.v1` schema stamp and `sde_run_status` inspection landed 2026-09-21; manifest writing at every dataset append is still Phase 2 work (FR-PROV-003/004)
+- [x] Stabilize the canonical pipeline boundary before adding more providers — the provider-blind runtime import audit (NFR-007) is now an enforced test (`tests/test_import_layering.py`), not a documented intention
 - [ ] Add additional social platforms only after the MVP acquisition layer is stable — the second real provider is Phase 5
 - [ ] Live gate: coverage ≥95 % on a logged-in desktop run (guest sessions plateau at 22–36 %) — Phase 3, requires the human-in-the-loop run in `agents.md`
 

@@ -1,0 +1,34 @@
+{
+  "schema_version": "plugin.v1",
+  "name": "sde-social-data",
+  "version": "1.0.0",
+  "description": "Social Data Engine as a host plugin: list providers, probe a URL, collect bounded canonical Observations, and read run/provenance status. Read-only surface, no credentials, no browser required for the deterministic provider.",
+  "requires": {
+    "python": ">=3.10",
+    "network": "none",
+    "credentials": "none"
+  },
+  "entrypoints": {
+    "js": "index.js",
+    "python_module": "src.mcp_server"
+  },
+  "transports": {
+    "stdio_mcp": {
+      "kind": "mcp",
+      "framing": "json-lines",
+      "command": ["{python}", "-m", "src.mcp_server"],
+      "cwd": "{repo_root}",
+      "notes": "One JSON-RPC 2.0 request per line on stdin, one response per line on stdout. EOF exits 0."
+    },
+    "http_mcp": {
+      "kind": "mcp",
+      "framing": "streamable-http",
+      "command": ["{python}", "-m", "src.mcp_http", "--port", "8765"],
+      "url": "http://127.0.0.1:8765/mcp",
+      "notes": "POST-only, loopback bind, requires Content-Type: application/json and a loopback Host header; optional --token."
+    }
+  },
+  "tools_source": "mcp:tools/list",
+  "tools_source_note": "The tool list is NOT duplicated here: query tools/list from either transport (single source of truth: src/mcp_server.py TOOL_SCHEMAS).",
+  "access_mode": "public/authenticated (declared per provider adapter; browser collection reuses the operator's own logged-in session — see policies/ACCEPTABLE-USE.md)"
+}

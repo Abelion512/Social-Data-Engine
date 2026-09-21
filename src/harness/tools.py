@@ -13,6 +13,7 @@ interface; platform spesifik hanya menimpa selector/strategy lewat `toolkit`.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
 
@@ -34,23 +35,30 @@ class AgentTool(ABC):
 
 
 # ── Concrete camoufox/playwright-backed tools ────────────────────────────────
-# JS snippets — diimport dari collector.js biar tidak diduplikat. Fall back ke
-# inline definisi bila collector belum di-import (circular-safe).
-try:
-    from src.collector import DOM_SCRAPE_JS, IMAGE_ENRICH_JS, _setup_route_intercept
-except Exception:  # pragma: no cover
-    DOM_SCRAPE_JS = ""
-    IMAGE_ENRICH_JS = ""
+# JS snippets stay in collector.py (single copy) but are fetched LAZILY: the
+# collector drags `src.browser_selector` → urllib.request + playwright +
+# camoufox, ~50 ms of interpreter import that a registry-only caller (MCP tool
+# call, plugin bridge, `--list-plugins`) must not pay. Module `__getattr__`
+# below keeps the old module-level names importable for legacy callers.
+_LAZY_COLLECTOR_NAMES = ("DOM_SCRAPE_JS", "IMAGE_ENRICH_JS",
+                         "_setup_route_intercept", "_api_fetch", "_on_route")
 
-try:
-    from src.collector import fetch_comments_api as _api_fetch
-except Exception:
-    _api_fetch = None
 
-try:
-    from src.collector import _on_route  # hook, kalau dibutuhkan
-except Exception:
-    _on_route = None
+@lru_cache(maxsize=None)
+def _collector_symbol(name: str):
+    """`name` from src.collector, imported on first use (""/None if unavailable)."""
+    fallback = "" if name in ("DOM_SCRAPE_JS", "IMAGE_ENRICH_JS") else None
+    try:
+        from src import collector  # local import: keeps the host path light
+    except Exception:  # pragma: no cover — collector is optional for a toolkit
+        return fallback
+    return getattr(collector, name, fallback)
+
+
+def __getattr__(name: str):
+    if name in _LAZY_COLLECTOR_NAMES:
+        return _collector_symbol(name)
+    raise AttributeError(f"module 'src.harness.tools' has no attribute {name!r}")
 
 
 CLICK_STRATEGIES = {
@@ -79,7 +87,7 @@ class BrowserRead(AgentTool):
     description = "scrape currently-visible comment nodes from DOM"
 
     async def act(self, page, strategy: str = "comments", **kwargs) -> Dict[str, Any]:
-        js = DOM_SCRAPE_JS or "(document.body.innerText)"
+        js = _collector_symbol("DOM_SCRAPE_JS") or "(document.body.innerText)"
         out = await page.evaluate(js)
         # normalisasi hasil scrape menjadi list (format collector)
         rows = out if isinstance(out, list) else []
@@ -156,7 +164,11 @@ class RouteCapture(AgentTool):
         self.counters = counters
 
     async def act(self, page, **kwargs) -> Dict[str, Any]:
-        await _setup_route_intercept(page, self.captured_pages, self.counters)
+        setup = _collector_symbol("_setup_route_intercept")
+        if setup is None:  # explicit failure, never a silent "registered" claim
+            return {"summary": "route intercept unavailable (collector not importable)",
+                    "registered": False}
+        await setup(page, self.captured_pages, self.counters)
         # _setup_route_intercept registers page.route("**/*", _on_route)
         registered = self.counters.get("route", 0) > 0 or True
         return {"summary": "route intercept registered", "registered": registered}
@@ -171,9 +183,10 @@ class ApiFetch(AgentTool):
     description = "fetch comment page from TikTok internal API"
 
     async def act(self, page, video_id: str, cursor: int = 0, **kwargs) -> Dict[str, Any]:
-        if _api_fetch is None:
+        fetch = _collector_symbol("_api_fetch")
+        if fetch is None:
             return {"summary": "api fetch unavailable", "rows": []}
-        data = await _api_fetch(page, video_id=video_id, cursor=cursor) or {}
+        data = await fetch(page, video_id=video_id, cursor=cursor) or {}
         rows = data.get("comments", []) if isinstance(data, dict) else []
         return {"summary": f"api fetched page cursor={cursor}", "rows": rows,
                 "cursor": data.get("cursor") if isinstance(data, dict) else None}
@@ -188,9 +201,10 @@ class ImageEnrich(AgentTool):
     description = "scroll into view + capture img/background-image/video[poster]"
 
     async def act(self, page, comment_ids: List[str], **kwargs) -> Dict[str, Any]:
-        if not IMAGE_ENRICH_JS:
+        js = _collector_symbol("IMAGE_ENRICH_JS")
+        if not js:
             return {"summary": "image enrich js unavailable", "rows": []}
-        out = await page.evaluate(IMAGE_ENRICH_JS, comment_ids)
+        out = await page.evaluate(js, comment_ids)
         return {"summary": "media enrichment pass", "rows": out or []}
 
     def observe(self, r: Dict) -> str:

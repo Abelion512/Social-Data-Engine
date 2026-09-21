@@ -40,7 +40,7 @@ harus melekatkan checklist ini.
 |---|---|---|---|
 | 1 | Compile | `python -m py_compile src/*.py src/*/*.py scripts/*.py tests/*.py` | ✅ |
 | 2 | Import + symbol | cross-check 6 modul + simbol (lihat `ci.yml job`) | ✅ |
-| 3 | Unit tests (mock) | semua suite deterministik: `for s in tests/test_*.py tests/run_*_tests.py; do python "$s"; done` (CI glob — sekarang 19 suite / 202 assertion) | ✅ |
+| 3 | Unit tests (mock) | semua suite deterministik: `for s in tests/test_*.py tests/run_*_tests.py; do python "$s"; done` (CI glob — sekarang 25 suite / 282 assertion) | ✅ |
 | 4 | Shell syntax | `bash -n run.sh && zsh -n run.sh` | ✅ |
 | 5 | Security | `grep -rn LINKEDIN_PASSWORD\|LINKEDIN_USERNAME src/` → 0 | ✅ |
 | 6 | Ponytail | `docs/PONYTAIL.md` ladder · CI step 6 (`TODO/FIXME/XXX/HACK` di `src/`+`scripts/` = 0) · **setiap inline `ponytail:` marker harus punya baris di `docs/PONYTAIL.md §6`** (CI step 7) · stdlib-only new code | ✅ |
@@ -154,6 +154,7 @@ python scripts/version_bump.py --bump patch --commit --push   # baru commit + ta
 - `docs/VERIFICATION.md` — poin 1–6 build/test matrix + bug-fix record
 - `docs/VERSIONING.md` — semver policy + MVP v1 kriteria stabil
 - `docs/PONYTAIL.md` — ladder, tags, `ponytail:` ceiling convention, debt ledger
+- `docs/INTEGRATIONS/PLUGIN.md` — SDE sebagai plugin host **generik**: tool surface, tiga jalur pasang (stdio MCP · Streamable HTTP · folder plugin), postur keamanan bridge, batasan jujur (host tertentu = **UNVERIFIED**, lihat §7)
 - `docs/SELF-IMPROVEMENT.md` — arsitektur RSI
 - `docs/chatgpt-response.md` — design brief (visi penuh)
 

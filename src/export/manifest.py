@@ -15,6 +15,33 @@ from datetime import datetime, timezone
 from src.policy.models import is_valid_identifier
 from src.runtime.context import require_slug_identifier, rooted_file
 
+# Dataset-manifest schema stamp (FR-PROV-003/004). Additive: a consumer can
+# invalidate a cached manifest when this changes instead of guessing from shape.
+MANIFEST_SCHEMA_VERSION = "manifest.v1"
+
+
+def _curated_files(curated_dir: Path) -> List[tuple]:
+    """(video_id, path) for every curated file, one entry per video.
+
+    The pipeline writes the dated layout `data/curated/<YYYY-MM-DD>/<id>.jsonl`
+    (`src/runtime/context.py::curated_file`, `export/mark.py`, the LinkedIn
+    consumer), while an older flat layout put files directly in
+    `data/curated/`. Scanning only the flat form made this function return
+    `total_videos: 0` for a real corpus — a silent empty success
+    (`policies/TRANSPARENCY.md` forbids that), so both are read now: newest date
+    first, first hit per video id wins, flat files last. Names that could not be
+    a real id are skipped rather than propagated into paths.
+    """
+    candidates: List[Path] = []
+    for date_dir in sorted((d for d in curated_dir.iterdir() if d.is_dir()), reverse=True):
+        candidates.extend(sorted(date_dir.glob("*.jsonl")))
+    candidates.extend(sorted(curated_dir.glob("*.jsonl")))
+    seen: Dict[str, Path] = {}
+    for path in candidates:
+        video_id = path.stem
+        if is_valid_identifier(video_id) and video_id not in seen:
+            seen[video_id] = path
+    return sorted(seen.items())
 
 
 def build_manifest(base_dir: Path) -> Dict[str, Any]:
@@ -28,6 +55,7 @@ def build_manifest(base_dir: Path) -> Dict[str, Any]:
 
     if not curated_dir.exists():
         return {
+            "schema_version": MANIFEST_SCHEMA_VERSION,
             "source": "unknown",
             "total_videos": 0,
             "total_comments": 0,
@@ -40,12 +68,7 @@ def build_manifest(base_dir: Path) -> Dict[str, Any]:
     total_comments = 0
     total_with_identity = 0
 
-    for f in sorted(curated_dir.glob("*.jsonl")):
-        video_id = f.stem
-        if not is_valid_identifier(video_id):
-            # Filenames are filesystem input, not a trusted source: skip anything
-            # that could not be a real id instead of propagating it into paths.
-            continue
+    for video_id, f in _curated_files(curated_dir):
         comments: List[Dict] = []
         with f.open("r", encoding="utf-8") as fh:
             for line in fh:
@@ -77,6 +100,7 @@ def build_manifest(base_dir: Path) -> Dict[str, Any]:
         })
 
     return {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
         "source": "tiktok",
         "total_videos": len(videos),
         "total_comments": total_comments,
@@ -103,6 +127,8 @@ def write_manifest(base_dir: Path, manifest: Dict[str, Any]) -> None:
         vid = require_slug_identifier(video_entry.get("video_id", ""), "video_id")
         vf = rooted_file(manifests_dir, f"{vid}.json", "per-video manifest (write_manifest)")
         # Cuma tulis field manifest saja
-        vm_data = video_entry.get("manifest", {})
+        vm_data = dict(video_entry.get("manifest", {}))
         if vm_data:
+            # Stamp the schema once, without overwriting a caller-provided value.
+            vm_data.setdefault("schema_version", MANIFEST_SCHEMA_VERSION)
             vf.write_text(json.dumps(vm_data, indent=2, ensure_ascii=False))

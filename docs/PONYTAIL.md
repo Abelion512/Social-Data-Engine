@@ -111,6 +111,10 @@ counts if it is written down with a trigger.
 | Ponytail-ledger gate matches ledger rows generously (module path, filename, or dotted name in any §6 cell) — no structured marker IDs | `scripts/check_ponytail_ledger.py` | if false positives appear, switch to a `ponytail-id:` convention with exact ledger references |
 | Cross-provider identity matching deleted (no caller, no test — see §7) | `src/pipeline/identity.py` | with the second real provider (Phase 5), where a cross-provider pair can actually exist |
 | Content id parser is path-based, no host allow-list (S-G7 egress scoping) | `src/tiktok_schema.py::parse_content_id` | Phase 3→4; changes navigation → live gate (threat model §2.14) |
+| Plugin adapter spawns one Python process per tool call (~50 ms after the import trim), no resident daemon | `integrations/plugin/index.js` | a host loops >100 calls per session, or a persistent stdio daemon lands |
+| Host-specific glue is NOT maintained here — a host that needs its own manifest/handler shape writes a ~12-line adapter that calls this package (`docs/INTEGRATIONS/PLUGIN.md §4`), so a host contract change is invisible to CI | `integrations/plugin/` | a host becomes one the repo actually supports, i.e. guaranteed-compatible + smoke-testable in the desktop gate |
+| No host is executed in CI, so every compatibility statement is UNVERIFIED by construction (the earlier Abelink-specific draft did pin one host's contract; it was dropped when the repo was made generic) | `docs/INTEGRATIONS/PLUGIN.md §7` | a host is integrated for real and can be exercised in the live desktop gate |
+| HTTP bridge deliberately has no `collect_start` job tool (a collection outlives a host's tool-call timeout) | `docs/INTEGRATIONS/PLUGIN.md §6.2`, `src/mcp_http.py` | spawning a background process is an approvable capability under `policies/SECURITY.md`/`SAFETY.md`, not a default grant |
 
 ## 7. What was cut, and what was not
 
